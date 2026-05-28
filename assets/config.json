@@ -1,0 +1,60 @@
+{
+  "_comment": "角色配置文件 — 修改此文件来配置你的角色素材",
+
+  "character": {
+    "name": "我的角色",
+    "width": 600,
+    "height": 700,
+    "backgroundColor": "0x0d1117"
+  },
+
+  "mouth": {
+    "_comment": "路径相对于本配置文件所在目录",
+    "states": {
+      "closed": "sprites/mouth/closed.png",
+      "small":  "sprites/mouth/small.png",
+      "medium": "sprites/mouth/medium.png",
+      "large":  "sprites/mouth/large.png",
+      "xlarge": "sprites/mouth/xlarge.png"
+    },
+    "thresholds": {
+      "_comment": "RMS 响度阈值，范围 0~1，可根据实际素材调整",
+      "small":  0.02,
+      "medium": 0.08,
+      "large":  0.18,
+      "xlarge": 0.35
+    }
+  },
+
+  "idle": [
+    {
+      "name": "指点",
+      "fps": 24,
+      "weight": 2,
+      "_comment": "weight 越大，被随机选中的概率越高",
+      "frames": [
+        "sprites/idle/point/01.png",
+        "sprites/idle/point/02.png",
+        "sprites/idle/point/03.png",
+        "sprites/idle/point/04.png",
+        "sprites/idle/point/03.png",
+        "sprites/idle/point/02.png",
+        "sprites/idle/point/01.png"
+      ]
+    },
+    {
+      "name": "思考",
+      "fps": 12,
+      "weight": 2,
+      "frames": [
+        "sprites/idle/think/01.png",
+        "sprites/idle/think/02.png",
+        "sprites/idle/think/03.png",
+        "sprites/idle/think/04.png",
+        "sprites/idle/think/03.png",
+        "sprites/idle/think/02.png",
+        "sprites/idle/think/01.png"
+      ]
+    }
+  ]
+}

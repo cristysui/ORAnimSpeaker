@@ -1,0 +1,38 @@
+{
+  "name": "voice-character-tool",
+  "version": "1.0.0",
+  "description": "语音驱动动漫人物序列帧工具",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder"
+  },
+  "dependencies": {
+    "pixi.js": "^7.3.2"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "build": {
+    "appId": "com.voicecharacter.tool",
+    "productName": "语音人物工具",
+    "mac": {
+      "category": "public.app-category.utilities",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "需要使用麦克风音量来驱动角色口型动画。"
+      }
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "assets/**/*",
+      "node_modules/**/*"
+    ]
+  }
+}

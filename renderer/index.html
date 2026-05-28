@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>语音人物工具</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-family: -apple-system, 'PingFang SC', sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* 标题栏（macOS拖拽区域） */
+    #titlebar {
+      height: 38px;
+      -webkit-app-region: drag;
+      display: flex;
+      align-items: center;
+      padding: 0 80px 0 20px;
+      background: #16213e;
+      border-bottom: 1px solid #0f3460;
+      flex-shrink: 0;
+    }
+    #titlebar h1 {
+      font-size: 13px;
+      color: #a0a0c0;
+      font-weight: 500;
+    }
+    #titlebar .status-badge {
+      margin-left: 12px;
+      padding: 2px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      transition: all 0.2s;
+    }
+    #titlebar .status-badge.idle { background: #2d2d4e; color: #7070a0; }
+    #titlebar .status-badge.speaking { background: #1a4a2e; color: #4ade80; }
+
+    /* 主布局 */
+    #main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* 左侧：角色显示区 */
+    #canvas-area {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0d1117;
+      position: relative;
+    }
+    #canvas-area canvas {
+      border-radius: 8px;
+    }
+
+    /* 无角色时的占位提示 */
+    #placeholder {
+      text-align: center;
+      color: #404060;
+    }
+    #placeholder .icon { font-size: 64px; margin-bottom: 16px; }
+    #placeholder p { font-size: 14px; line-height: 1.8; }
+
+    /* 右侧：控制面板 */
+    #panel {
+      width: 280px;
+      background: #16213e;
+      border-left: 1px solid #0f3460;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      gap: 16px;
+      overflow-y: auto;
+    }
+
+    .panel-section {
+      background: #0d1b33;
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .panel-section h3 {
+      font-size: 11px;
+      color: #6070a0;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 12px;
+      font-weight: 600;
+    }
+
+    /* 音量可视化 */
+    #volume-bar-container {
+      background: #0a1225;
+      border-radius: 6px;
+      height: 8px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+    #volume-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #4ade80, #86efac);
+      border-radius: 6px;
+      transition: width 0.05s ease-out;
+    }
+    #volume-label {
+      font-size: 11px;
+      color: #5060a0;
+      text-align: right;
+    }
+
+    /* 口型状态指示 */
+    #mouth-states {
+      display: flex;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .mouth-dot {
+      flex: 1;
+      height: 28px;
+      border-radius: 6px;
+      background: #0a1225;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: #404060;
+      transition: all 0.1s;
+    }
+    .mouth-dot.active {
+      background: #1a3a5e;
+      color: #60a0ff;
+    }
+
+    /* 按钮 */
+    .btn {
+      width: 100%;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.15s;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    .btn:last-child { margin-bottom: 0; }
+    .btn-primary {
+      background: #2563eb;
+      color: white;
+    }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-primary:disabled { background: #1a2a4e; color: #404060; cursor: not-allowed; }
+    .btn-secondary {
+      background: #1e293b;
+      color: #a0b0d0;
+      border: 1px solid #2d3f60;
+    }
+    .btn-secondary:hover { background: #253452; }
+    .btn-secondary.active {
+      background: #1a3a1a;
+      color: #4ade80;
+      border-color: #2d6040;
+    }
+    .btn-danger {
+      background: #3a1a1a;
+      color: #f87171;
+      border: 1px solid #6a2a2a;
+    }
+    .btn-danger:hover { background: #4a1a1a; }
+
+    /* 设置项 */
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .setting-row:last-child { margin-bottom: 0; }
+    .setting-row label {
+      font-size: 12px;
+      color: #8090b0;
+    }
+    .setting-row input[type="range"] {
+      width: 110px;
+      accent-color: #2563eb;
+    }
+    .setting-row .val {
+      font-size: 11px;
+      color: #5060a0;
+      width: 32px;
+      text-align: right;
+    }
+
+    /* 当前动作标签 */
+    #current-action {
+      font-size: 12px;
+      color: #5060a0;
+      margin-top: 8px;
+      min-height: 18px;
+    }
+    #current-action span {
+      color: #7080b0;
+      font-weight: 500;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 标题栏 -->
+  <div id="titlebar">
+    <h1>🎬 语音人物工具</h1>
+    <div class="status-badge idle" id="status-badge">idle</div>
+  </div>
+
+  <div id="main">
+    <!-- 角色显示区 -->
+    <div id="canvas-area">
+      <div id="placeholder">
+        <div class="icon">🎭</div>
+        <p>请先加载角色配置文件<br>再选择音频输入方式</p>
+      </div>
+    </div>
+
+    <!-- 控制面板 -->
+    <div id="panel">
+
+      <!-- 角色配置 -->
+      <div class="panel-section">
+        <h3>角色</h3>
+        <button class="btn btn-secondary" id="btn-load-config">📁 加载角色配置</button>
+        <div id="current-action">未加载角色</div>
+      </div>
+
+      <!-- 音频输入 -->
+      <div class="panel-section">
+        <h3>音频输入</h3>
+        <button class="btn btn-secondary" id="btn-mic">🎤 使用麦克风</button>
+        <button class="btn btn-secondary" id="btn-audio-file">🎵 导入音频文件</button>
+        <button class="btn btn-danger" id="btn-stop" disabled>⏹ 停止</button>
+      </div>
+
+      <!-- 音量可视化 -->
+      <div class="panel-section">
+        <h3>实时音量</h3>
+        <div id="volume-bar-container">
+          <div id="volume-bar"></div>
+        </div>
+        <div id="volume-label">0.00</div>
+        <div id="mouth-states">
+          <div class="mouth-dot" data-state="closed">闭</div>
+          <div class="mouth-dot" data-state="small">微</div>
+          <div class="mouth-dot" data-state="medium">中</div>
+          <div class="mouth-dot" data-state="large">大</div>
+          <div class="mouth-dot" data-state="xlarge">极</div>
+        </div>
+      </div>
+
+      <!-- 参数调节 -->
+      <div class="panel-section">
+        <h3>参数</h3>
+        <div class="setting-row">
+          <label>静默阈值</label>
+          <input type="range" id="silence-threshold" min="1" max="20" value="3" step="1">
+          <span class="val" id="silence-threshold-val">3</span>
+        </div>
+        <div class="setting-row">
+          <label>静默延迟(ms)</label>
+          <input type="range" id="silence-delay" min="100" max="1000" value="300" step="50">
+          <span class="val" id="silence-delay-val">300</span>
+        </div>
+        <div class="setting-row">
+          <label>动作间隔(s)</label>
+          <input type="range" id="idle-interval" min="1" max="10" value="4" step="0.5">
+          <span class="val" id="idle-interval-val">4</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- PixiJS -->
+  <script src="../node_modules/pixi.js/dist/pixi.min.js"></script>
+  <!-- 核心模块 -->
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
