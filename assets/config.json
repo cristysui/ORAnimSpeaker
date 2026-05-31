@@ -1,31 +1,90 @@
 {
   "_comment": "角色配置文件 — 修改此文件来配置你的角色素材",
-
   "character": {
     "name": "我的角色",
     "width": 600,
     "height": 700,
     "backgroundColor": "0x0d1117"
   },
-
+  "layers": [
+    {
+      "id": "body",
+      "label": "身体",
+      "type": "image",
+      "src": "sprites/mouth/closed.png",
+      "x": 300,
+      "y": 350,
+      "width": 600,
+      "height": 700,
+      "anchor": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "scale": 1,
+      "rotation": 0,
+      "zIndex": 0,
+      "editable": true
+    },
+    {
+      "id": "mouth",
+      "label": "嘴型",
+      "type": "mouth",
+      "states": {
+        "closed": "sprites/mouth/closed.png",
+        "small": "sprites/mouth/small.png",
+        "medium": "sprites/mouth/medium.png",
+        "large": "sprites/mouth/large.png",
+        "xlarge": "sprites/mouth/xlarge.png"
+      },
+      "x": 312,
+      "y": 349,
+      "width": 600,
+      "height": 700,
+      "anchor": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "scale": {
+        "x": 0.6109979633401222,
+        "y": 0.7128309572301426
+      },
+      "rotation": 0,
+      "zIndex": 10,
+      "editable": true,
+      "visible": true
+    }
+  ],
+  "actions": {
+    "nod": {
+      "label": "点头",
+      "duration": 520
+    },
+    "shake": {
+      "label": "摇头",
+      "duration": 620
+    },
+    "emphasis": {
+      "label": "强调",
+      "duration": 420
+    }
+  },
   "mouth": {
     "_comment": "路径相对于本配置文件所在目录",
     "states": {
       "closed": "sprites/mouth/closed.png",
-      "small":  "sprites/mouth/small.png",
+      "small": "sprites/mouth/small.png",
       "medium": "sprites/mouth/medium.png",
-      "large":  "sprites/mouth/large.png",
+      "large": "sprites/mouth/large.png",
       "xlarge": "sprites/mouth/xlarge.png"
     },
     "thresholds": {
       "_comment": "RMS 响度阈值，范围 0~1，可根据实际素材调整",
-      "small":  0.02,
+      "small": 0.02,
       "medium": 0.08,
-      "large":  0.18,
+      "large": 0.18,
       "xlarge": 0.35
     }
   },
-
   "idle": [
     {
       "name": "指点",

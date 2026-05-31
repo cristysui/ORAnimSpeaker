@@ -22,17 +22,27 @@ export class StateMachine {
   constructor({
     silenceThreshold = 0.03,
     silenceDelayMs = 300,
+    mouthHoldMs = 70,
+    rmsAttack = 0.45,
+    rmsRelease = 0.18,
+    hysteresisRatio = 0.82,
     onStateChange = null,
     onMouthChange = null
   } = {}) {
     this.silenceThreshold = silenceThreshold
     this.silenceDelayMs = silenceDelayMs
+    this.mouthHoldMs = mouthHoldMs
+    this.rmsAttack = rmsAttack
+    this.rmsRelease = rmsRelease
+    this.hysteresisRatio = hysteresisRatio
     this._onStateChange = onStateChange
     this._onMouthChange = onMouthChange
 
     this.currentState = STATE.IDLE
     this._silenceTimer = null
     this._currentMouth = 'closed'
+    this._smoothedRms = 0
+    this._lastMouthChangeAt = 0
 
     // 口型档位阈值（对应标准5档）
     this.mouthThresholds = {
@@ -48,18 +58,16 @@ export class StateMachine {
    * @param {number} rms - 0~1
    */
   update(rms) {
-    if (rms > this.silenceThreshold) {
+    const smoothedRms = this._smoothRms(rms)
+
+    if (smoothedRms > this.silenceThreshold) {
       // 有声音
       this._clearSilenceTimer()
       if (this.currentState !== STATE.SPEAKING) {
         this._transition(STATE.SPEAKING)
       }
       // 更新口型
-      const mouth = this._rmsToMouth(rms)
-      if (mouth !== this._currentMouth) {
-        this._currentMouth = mouth
-        if (this._onMouthChange) this._onMouthChange(mouth)
-      }
+      this._updateMouth(smoothedRms)
     } else {
       // 静默：延迟切换到 IDLE
       if (this.currentState === STATE.SPEAKING && !this._silenceTimer) {
@@ -76,9 +84,10 @@ export class StateMachine {
   /**
    * 更新配置参数（UI滑块实时调节）
    */
-  setConfig({ silenceThreshold, silenceDelayMs }) {
+  setConfig({ silenceThreshold, silenceDelayMs, mouthHoldMs }) {
     if (silenceThreshold !== undefined) this.silenceThreshold = silenceThreshold
     if (silenceDelayMs !== undefined) this.silenceDelayMs = silenceDelayMs
+    if (mouthHoldMs !== undefined) this.mouthHoldMs = mouthHoldMs
   }
 
   /**
@@ -86,6 +95,20 @@ export class StateMachine {
    */
   setMouthThresholds(thresholds) {
     this.mouthThresholds = { ...this.mouthThresholds, ...thresholds }
+  }
+
+  /**
+   * 停止音频或重新加载时重置内部平滑状态。
+   */
+  reset() {
+    this._clearSilenceTimer()
+    const oldState = this.currentState
+    this.currentState = STATE.IDLE
+    this._currentMouth = 'closed'
+    this._smoothedRms = 0
+    this._lastMouthChangeAt = 0
+    if (oldState !== STATE.IDLE && this._onStateChange) this._onStateChange(STATE.IDLE, oldState)
+    if (this._onMouthChange) this._onMouthChange('closed')
   }
 
   // ---- 内部方法 ----
@@ -103,15 +126,54 @@ export class StateMachine {
     }
   }
 
+  _smoothRms(rms) {
+    const alpha = rms > this._smoothedRms ? this.rmsAttack : this.rmsRelease
+    this._smoothedRms = this._smoothedRms + (rms - this._smoothedRms) * alpha
+    return this._smoothedRms
+  }
+
+  _updateMouth(rms) {
+    const now = performance.now()
+    const mouth = this._rmsToMouth(rms)
+    if (mouth === this._currentMouth) return
+
+    const currentLevel = this._mouthLevel(this._currentMouth)
+    const nextLevel = this._mouthLevel(mouth)
+    const canChangeFast = nextLevel > currentLevel
+    if (!canChangeFast && now - this._lastMouthChangeAt < this.mouthHoldMs) return
+
+    this._currentMouth = mouth
+    this._lastMouthChangeAt = now
+    if (this._onMouthChange) this._onMouthChange(mouth)
+  }
+
   /**
    * RMS 值 → 口型状态名称
    */
   _rmsToMouth(rms) {
     const t = this.mouthThresholds
-    if (rms >= t.xlarge) return 'xlarge'
-    if (rms >= t.large)  return 'large'
-    if (rms >= t.medium) return 'medium'
-    if (rms >= t.small)  return 'small'
+    const currentLevel = this._mouthLevel(this._currentMouth)
+    if (rms >= this._thresholdForLevel(4, currentLevel)) return 'xlarge'
+    if (rms >= this._thresholdForLevel(3, currentLevel)) return 'large'
+    if (rms >= this._thresholdForLevel(2, currentLevel)) return 'medium'
+    if (rms >= this._thresholdForLevel(1, currentLevel)) return 'small'
     return 'closed'
+  }
+
+  _thresholdForLevel(level, currentLevel) {
+    const thresholds = [0, this.mouthThresholds.small, this.mouthThresholds.medium, this.mouthThresholds.large, this.mouthThresholds.xlarge]
+    const threshold = thresholds[level]
+    return currentLevel >= level ? threshold * this.hysteresisRatio : threshold
+  }
+
+  _mouthLevel(mouth) {
+    const levels = {
+      closed: 0,
+      small: 1,
+      medium: 2,
+      large: 3,
+      xlarge: 4
+    }
+    return levels[mouth] ?? 0
   }
 }

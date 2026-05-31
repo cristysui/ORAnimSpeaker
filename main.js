@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain, dialog, session, systemPreferences } = require('electron')
+const fs = require('fs/promises')
 const path = require('path')
 
 let mainWindow
@@ -75,6 +76,17 @@ ipcMain.handle('open-config-file', async () => {
     return result.filePaths[0]
   }
   return null
+})
+
+// IPC: 保存角色配置文件
+ipcMain.handle('save-config-file', async (event, filePath, config) => {
+  if (!filePath) {
+    throw new Error('缺少配置文件路径')
+  }
+
+  const json = typeof config === 'string' ? config : JSON.stringify(config, null, 2)
+  await fs.writeFile(filePath, `${json}\n`, 'utf8')
+  return true
 })
 
 // IPC: 获取应用根目录（用于加载默认资源）
