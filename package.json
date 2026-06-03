@@ -1,14 +1,33 @@
 {
   "name": "voice-character-tool",
   "version": "1.0.0",
-  "description": "语音驱动动漫人物序列帧工具",
+  "private": true,
+  "description": "OpenReel-based voice character video editor",
   "main": "main.js",
+  "packageManager": "pnpm@9.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "start": "electron .",
-    "dev": "electron . --dev",
-    "build": "electron-builder"
+    "dev": "npx pnpm --filter @openreel/web dev",
+    "dev:web": "npx pnpm --filter @openreel/web dev",
+    "build": "npx pnpm build:wasm && npx pnpm --filter @openreel/web build",
+    "build:web": "npx pnpm --filter @openreel/web build",
+    "build:wasm": "npx pnpm --filter @openreel/core build:wasm",
+    "preview": "npx pnpm --filter @openreel/web preview",
+    "test": "npx pnpm -r test:run",
+    "typecheck": "npx pnpm -r typecheck",
+    "lint": "npx pnpm -r lint",
+    "clean": "npx pnpm -r clean",
+    "start:electron": "electron .",
+    "dev:electron": "electron . --dev",
+    "build:electron": "electron-builder"
   },
   "dependencies": {
+    "@ffmpeg/core": "0.12.6",
+    "@ffmpeg/core-mt": "0.12.6",
+    "mediabunny": "^1.25.3",
     "pixi.js": "^7.3.2"
   },
   "devDependencies": {

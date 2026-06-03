@@ -65,6 +65,14 @@
     #canvas-area canvas {
       border-radius: 8px;
     }
+    .character-video {
+      max-width: 100%;
+      max-height: 100%;
+      border-radius: 8px;
+      object-fit: contain;
+      background: #0d1117;
+      display: none;
+    }
 
     /* 无角色时的占位提示 */
     #placeholder {
@@ -278,6 +286,19 @@
         <button class="btn btn-danger" id="btn-stop" disabled>⏹ 停止</button>
       </div>
 
+      <!-- 视频片段模式 -->
+      <div class="panel-section">
+        <h3>视频片段模式</h3>
+        <button class="btn btn-secondary" id="btn-video-idle">导入静止片段</button>
+        <button class="btn btn-secondary" id="btn-video-speaking">导入说话片段</button>
+        <button class="btn btn-secondary" id="btn-video-action">导入动作片段</button>
+        <button class="btn btn-secondary" id="btn-video-manual-idle" disabled>手动静止</button>
+        <button class="btn btn-secondary" id="btn-video-manual-speaking" disabled>手动说话</button>
+        <button class="btn btn-secondary" id="btn-video-manual-action" disabled>手动动作</button>
+        <button class="btn btn-secondary" id="btn-video-replay" disabled>回放当前片段</button>
+        <div class="hint" id="video-clip-status">静止 0 / 说话 0 / 动作 0</div>
+      </div>
+
       <!-- 手动动作 -->
       <div class="panel-section">
         <h3>手动动作</h3>
@@ -370,9 +391,7 @@
     </div>
   </div>
 
-  <!-- PixiJS -->
-  <script src="../node_modules/pixi.js/dist/pixi.min.js"></script>
-  <!-- 核心模块 -->
-  <script type="module" src="./src/app.js"></script>
+  <!-- 视频片段工作流 -->
+  <script type="module" src="./src/videoWorkflowApp.js"></script>
 </body>
 </html>

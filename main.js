@@ -4,6 +4,28 @@ const path = require('path')
 
 let mainWindow
 
+function createDefaultVideoProjectConfig() {
+  return {
+    characters: [
+      {
+        id: 'default',
+        name: '默认角色',
+        clips: {
+          speaking: [],
+          manualSpeaking: [],
+          idle: [],
+          actions: []
+        }
+      }
+    ],
+    lastCanvas: { width: 1080, height: 1920 }
+  }
+}
+
+function getVideoProjectConfigPath() {
+  return path.join(app.getPath('userData'), 'video-project-config.json')
+}
+
 function createWindow() {
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details = {}) => {
     if (permission === 'media') {
@@ -52,6 +74,21 @@ ipcMain.handle('open-audio-file', async () => {
   return null
 })
 
+// IPC: 打开文件选择对话框（选视频片段，可多选）
+ipcMain.handle('open-video-files', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '选择视频片段',
+    filters: [
+      { name: '视频文件', extensions: ['mp4', 'mov', 'webm', 'm4v'] }
+    ],
+    properties: ['openFile', 'multiSelections']
+  })
+  if (!result.canceled && result.filePaths.length > 0) {
+    return result.filePaths
+  }
+  return []
+})
+
 // IPC: 请求系统麦克风权限（macOS 需要主进程触发系统授权弹窗）
 ipcMain.handle('request-microphone-access', async () => {
   if (process.platform !== 'darwin') return true
@@ -86,6 +123,29 @@ ipcMain.handle('save-config-file', async (event, filePath, config) => {
 
   const json = typeof config === 'string' ? config : JSON.stringify(config, null, 2)
   await fs.writeFile(filePath, `${json}\n`, 'utf8')
+  return true
+})
+
+// IPC: 读取视频片段工作流配置（保存到本机应用数据目录）
+ipcMain.handle('load-video-project-config', async () => {
+  const configPath = getVideoProjectConfigPath()
+  try {
+    const text = await fs.readFile(configPath, 'utf8')
+    return JSON.parse(text)
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err
+    const config = createDefaultVideoProjectConfig()
+    await fs.mkdir(path.dirname(configPath), { recursive: true })
+    await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+    return config
+  }
+})
+
+// IPC: 保存视频片段工作流配置
+ipcMain.handle('save-video-project-config', async (event, config) => {
+  const configPath = getVideoProjectConfigPath()
+  await fs.mkdir(path.dirname(configPath), { recursive: true })
+  await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
   return true
 })
 

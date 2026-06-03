@@ -5,6 +5,7 @@
 import { AudioAnalyzer } from './AudioAnalyzer.js'
 import { StateMachine, STATE } from './StateMachine.js'
 import { CharacterController } from './CharacterController.js'
+import { VideoClipController } from './VideoClipController.js'
 
 // ---- 初始化各模块 ----
 const canvasArea = document.getElementById('canvas-area')
@@ -14,6 +15,7 @@ const stateMachine = new StateMachine({
   silenceDelayMs: 300
 })
 const character = new CharacterController(canvasArea)
+const videoClips = new VideoClipController(canvasArea)
 
 let isAudioRunning = false
 let configLoaded = false
@@ -26,11 +28,13 @@ let timelineRecording = false
 let timelineEvents = []
 let playbackTimelineIndex = 0
 let audioStartedAt = 0
+let videoModeActive = false
 
 // ---- 状态机回调 ----
 stateMachine._onStateChange = (newState, oldState) => {
   // 更新角色
   character.onStateChange(newState, oldState)
+  videoClips.setAudioSpeaking(newState === STATE.SPEAKING)
   // 更新 UI 状态徽章
   const badge = document.getElementById('status-badge')
   badge.textContent = newState === STATE.SPEAKING ? 'speaking' : 'idle'
@@ -137,10 +141,14 @@ document.getElementById('btn-audio-file').addEventListener('click', async () => 
 
   // 播放完成后自动重置
   analyzer.startAudioFile(filePath).then(() => {
+    stateMachine.reset()
+    videoClips.playIdle()
     resetAudioState()
   }).catch(err => {
     console.error('音频文件播放失败:', err)
     alert(`音频文件播放失败: ${err.message}`)
+    stateMachine.reset()
+    videoClips.playIdle()
     resetAudioState()
   })
 })
@@ -150,6 +158,7 @@ document.getElementById('btn-stop').addEventListener('click', () => {
   analyzer.stop()
   resetAudioState()
   stateMachine.reset()
+  videoClips.playIdle()
 })
 
 // 重置音频状态的 UI
@@ -217,6 +226,38 @@ function setEditorEnabled(enabled) {
 function setTimelineControlsEnabled(enabled) {
   document.getElementById('btn-record-timeline').disabled = !enabled
   document.getElementById('btn-clear-timeline').disabled = !enabled
+}
+
+function setVideoControlsEnabled(enabled) {
+  [
+    'btn-video-manual-idle',
+    'btn-video-manual-speaking',
+    'btn-video-manual-action',
+    'btn-video-replay'
+  ].forEach(id => {
+    document.getElementById(id).disabled = !enabled
+  })
+}
+
+function updateVideoClipStatus() {
+  const counts = videoClips.getClipCounts()
+  document.getElementById('video-clip-status').textContent = `静止 ${counts.idle} / 说话 ${counts.speaking} / 动作 ${counts.action}`
+  videoModeActive = videoClips.hasRequiredClips()
+  setVideoControlsEnabled(videoModeActive)
+  if (videoModeActive) {
+    configLoaded = true
+    document.getElementById('btn-mic').disabled = false
+    document.getElementById('btn-audio-file').disabled = false
+    document.getElementById('current-action').innerHTML = '视频片段模式已启用 ✓'
+  }
+}
+
+async function loadVideoClips(type) {
+  const files = await window.electronAPI.openVideoFiles()
+  if (!files || files.length === 0) return
+  videoClips.addClips(type, files)
+  document.getElementById('placeholder').style.display = 'none'
+  updateVideoClipStatus()
 }
 
 function setLayerInputsEnabled(enabled) {
@@ -336,12 +377,21 @@ setActionButtonsEnabled(false)
 setEditorEnabled(false)
 setTimelineControlsEnabled(false)
 setLayerInputsEnabled(false)
+setVideoControlsEnabled(false)
 
 document.querySelectorAll('.action-btn').forEach(button => {
   button.addEventListener('click', () => {
     triggerManualAction(button.dataset.action)
   })
 })
+
+document.getElementById('btn-video-idle').addEventListener('click', () => loadVideoClips('idle'))
+document.getElementById('btn-video-speaking').addEventListener('click', () => loadVideoClips('speaking'))
+document.getElementById('btn-video-action').addEventListener('click', () => loadVideoClips('action'))
+document.getElementById('btn-video-manual-idle').addEventListener('click', () => videoClips.playIdle())
+document.getElementById('btn-video-manual-speaking').addEventListener('click', () => videoClips.playSpeakingManual())
+document.getElementById('btn-video-manual-action').addEventListener('click', () => videoClips.playActionManual())
+document.getElementById('btn-video-replay').addEventListener('click', () => videoClips.replayCurrent())
 
 document.addEventListener('keydown', (event) => {
   if (event.repeat) return
