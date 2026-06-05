@@ -119,7 +119,10 @@ export interface ProjectState {
   updateSettings: (settings: Partial<ProjectSettings>) => Promise<ActionResult>;
 
   // Media library actions
-  importMedia: (file: File) => Promise<ActionResult>;
+  importMedia: (
+    file: File,
+    options?: { browserVideoMetadata?: boolean; thumbnailUrl?: string | null },
+  ) => Promise<ActionResult>;
   deleteMedia: (mediaId: string) => Promise<ActionResult>;
   replaceMediaAsset: (mediaId: string, file: File, sourceFolder?: string) => Promise<ActionResult>;
   renameMedia: (mediaId: string, name: string) => Promise<ActionResult>;
@@ -1636,10 +1639,64 @@ export const useProjectStore = create<ProjectState>()(
       },
 
       // Media library actions
-      importMedia: async (file: File) => {
+      importMedia: async (file: File, options = {}) => {
         const { project } = get();
 
         try {
+          if (options.browserVideoMetadata && isLikelyVideoFile(file)) {
+            const metadata = await extractBrowserVideoMetadata(file);
+            const newMediaItem: MediaItem = {
+              id: uuidv4(),
+              name: file.name,
+              type: "video",
+              fileHandle: null,
+              blob: file,
+              metadata: {
+                duration: metadata.duration,
+                width: metadata.width,
+                height: metadata.height,
+                frameRate: 0,
+                codec: "",
+                sampleRate: 0,
+                channels: 0,
+                fileSize: file.size,
+              },
+              thumbnailUrl: options.thumbnailUrl ?? null,
+              waveformData: null,
+              filmstripThumbnails: options.thumbnailUrl
+                ? [{ timestamp: 0, url: options.thumbnailUrl }]
+                : undefined,
+              sourceFile: { name: file.name, size: file.size, lastModified: file.lastModified },
+            };
+
+            const updatedProject = {
+              ...project,
+              mediaLibrary: {
+                ...project.mediaLibrary,
+                items: [...project.mediaLibrary.items, newMediaItem],
+              },
+              modifiedAt: Date.now(),
+            };
+
+            set({ project: updatedProject });
+
+            try {
+              await saveMediaBlob(
+                updatedProject.id,
+                newMediaItem.id,
+                file,
+                newMediaItem.metadata,
+              );
+            } catch (err) {
+              console.error("[ProjectStore] Failed to persist media blob:", err);
+            }
+
+            return {
+              success: true,
+              actionId: newMediaItem.id,
+            };
+          }
+
           const mediaBridge = getMediaBridge();
           if (!mediaBridge.isInitialized()) {
             await initializeMediaBridge();
@@ -6029,3 +6086,43 @@ export const useProjectStore = create<ProjectState>()(
     };
   }),
 );
+
+function isLikelyVideoFile(file: File): boolean {
+  return file.type.startsWith("video/") || /\.(mp4|m4v|mov|webm|mkv)$/i.test(file.name);
+}
+
+function extractBrowserVideoMetadata(
+  file: File,
+): Promise<{ duration: number; width: number; height: number }> {
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    const url = URL.createObjectURL(file);
+    let settled = false;
+
+    const finish = (metadata?: { duration: number; width: number; height: number }) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+      URL.revokeObjectURL(url);
+      resolve(metadata ?? { duration: 0, width: 0, height: 0 });
+    };
+
+    const timeoutId = window.setTimeout(() => finish(), 2500);
+    video.preload = "metadata";
+    video.muted = true;
+    video.playsInline = true;
+    video.onloadedmetadata = () => {
+      finish({
+        duration: Number.isFinite(video.duration) ? video.duration : 0,
+        width: video.videoWidth || 0,
+        height: video.videoHeight || 0,
+      });
+    };
+    video.onerror = () => finish();
+    video.src = url;
+    video.load();
+  });
+}

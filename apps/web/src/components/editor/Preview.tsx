@@ -3576,7 +3576,10 @@ export const Preview: React.FC = () => {
       if (mediaItem?.type !== "image" || !mediaItem.blob) return null;
 
       try {
-        const bitmap = await createImageBitmap(mediaItem.blob);
+        const bitmap = await withPlaybackTimeout(
+          createImageBitmap(mediaItem.blob),
+          1200,
+        );
         imageBitmapCacheRef.current.set(clip.mediaId, bitmap);
         return bitmap;
       } catch (error) {
@@ -3643,7 +3646,7 @@ export const Preview: React.FC = () => {
       }
 
       try {
-        await preDecodeAllAudioBuffers();
+        await withPlaybackTimeout(preDecodeAllAudioBuffers(), 1500);
       } catch (error) {
         console.warn("[Preview] Audio warmup failed:", error);
       }
@@ -3668,7 +3671,9 @@ export const Preview: React.FC = () => {
         });
       }
 
-      await audioGraph.resume();
+      await withPlaybackTimeout(audioGraph.resume(), 1200).catch((error) => {
+        console.warn("[Preview] Audio resume timed out:", error);
+      });
 
       const mainCtx = canvas.getContext("2d");
       if (!mainCtx) {
@@ -3703,7 +3708,9 @@ export const Preview: React.FC = () => {
       masterClock.seek(playbackStartPosition);
 
       audioGraph.seekTo(playbackStartPosition);
-      await masterClock.play();
+      await withPlaybackTimeout(masterClock.play(), 1200).catch((error) => {
+        console.warn("[Preview] Master clock play timed out:", error);
+      });
       audioGraph.startScheduler(getAudioClipsForScheduler);
 
       const frameDuration = 1000 / 30;
@@ -3719,6 +3726,15 @@ export const Preview: React.FC = () => {
         }
 
         if (isProcessingFrame) {
+          if (isActive) {
+            window.setTimeout(() => {
+              if (isActive) {
+                animationRef.current = requestAnimationFrame(
+                  processMultiTrackFrame,
+                );
+              }
+            }, 16);
+          }
           return;
         }
         isProcessingFrame = true;
@@ -4393,7 +4409,10 @@ export const Preview: React.FC = () => {
 
             try {
               lastGoodFrameRef.current?.close();
-              lastGoodFrameRef.current = await createImageBitmap(offscreenCanvasRef.current!);
+              lastGoodFrameRef.current = await withPlaybackTimeout(
+                createImageBitmap(offscreenCanvasRef.current!),
+                250,
+              );
             } catch {}
           } else if (lastGoodFrameRef.current) {
             ctx.clearRect(0, 0, canvas.width, canvas.height);

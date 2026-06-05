@@ -216,6 +216,21 @@ export class ExportEngine {
     writableStream?: FileSystemWritableFileStream,
   ): AsyncGenerator<ExportProgress, ExportResult> {
     this.ensureInitialized();
+    const exportId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID().slice(0, 8)
+        : Math.random().toString(36).slice(2, 10);
+    const exportStart = performance.now();
+    let lastMark = exportStart;
+    const logExport = (stage: string, details: Record<string, unknown> = {}) => {
+      const now = performance.now();
+      console.info(`[Export:${exportId}] ${stage}`, {
+        elapsedMs: Math.round(now - exportStart),
+        stepMs: Math.round(now - lastMark),
+        ...details,
+      });
+      lastMark = now;
+    };
 
     if (!this.mediabunny) {
       const errorMessage = this.isWebCodecsSupported()
@@ -269,11 +284,22 @@ export class ExportEngine {
 
     this.abortController = new AbortController();
     this.currentExport = { startTime: Date.now(), framesRendered: 0 };
+    logExport("start", {
+      project: project.name,
+      duration: timelineDuration,
+      tracks: project.timeline.tracks.length,
+      width: fullSettings.width,
+      height: fullSettings.height,
+      frameRate: fullSettings.frameRate,
+      format: fullSettings.format,
+      codec: fullSettings.codec,
+    });
 
     await this.initializeGPUForExport(
       fullSettings.width,
       fullSettings.height,
     );
+    logExport("gpu initialized");
 
     this.videoEngine?.resetExportState();
     if (this.videoEngine) {
@@ -307,6 +333,7 @@ export class ExportEngine {
 
     try {
       yield this.createProgress("preparing", 0, totalFrames, 0, 0);
+      logExport("prepare output", { totalFrames });
 
       const {
         Output,
@@ -354,6 +381,7 @@ export class ExportEngine {
         chunkSize: 4 * 1024 * 1024,
       });
       const output = new Output({ format: outputFormat, target });
+      logExport("output created");
 
       const videoCodec = await getFirstEncodableVideoCodec(
         outputFormat.getSupportedVideoCodecs(),
@@ -373,6 +401,11 @@ export class ExportEngine {
         fullSettings.audioSettings,
         getFirstEncodableAudioCodec,
       );
+      logExport("codecs selected", {
+        videoCodec,
+        audioCodec: audioCodecResult.codec,
+        audioBitrate: audioCodecResult.bitrate,
+      });
 
       const videoSource = new VideoSampleSource({
         codec: videoCodec,
@@ -393,13 +426,17 @@ export class ExportEngine {
       });
 
       await output.start();
+      logExport("output started");
 
       try {
+        logExport("audio encode start");
         await this.encodeTimelineAudioToSource(project, audioSource);
+        logExport("audio encode complete");
       } finally {
         this.audioEngine?.clearCache();
       }
       audioSource.close();
+      logExport("audio source closed");
 
       const mediaEngine = getMediaEngine();
       const videoMediaIds: string[] = [];
@@ -421,6 +458,7 @@ export class ExportEngine {
           }
         }
       }
+      logExport("video decoders prepared", { videoMediaCount: videoMediaIds.length });
 
       for (let frame = 0; frame < totalFrames; frame++) {
         if (this.abortController.signal.aborted) {
@@ -432,12 +470,18 @@ export class ExportEngine {
         }
 
         const time = frame / fullSettings.frameRate;
+        if (frame === 0) {
+          logExport("first frame render start", { time });
+        }
         const rendered = await this.videoEngine!.renderFrame(
           project,
           time,
           fullSettings.width,
           fullSettings.height,
         );
+        if (frame === 0) {
+          logExport("first frame render complete");
+        }
         const shouldUpscale = this.shouldApplyUpscaling(project, fullSettings);
         let frameImage = rendered.image;
 
@@ -457,7 +501,13 @@ export class ExportEngine {
           duration: 1 / fullSettings.frameRate,
         });
 
+        if (frame === 0) {
+          logExport("first frame encode start");
+        }
         await videoSource.add(videoSample);
+        if (frame === 0) {
+          logExport("first frame encode complete");
+        }
         videoSample.close();
         frameImage.close();
 
@@ -471,6 +521,13 @@ export class ExportEngine {
           } catch {}
           await new Promise((resolve) => setTimeout(resolve, 2));
         }
+        if ((frame + 1) % Math.max(1, fullSettings.frameRate * 5) === 0) {
+          logExport("render progress", {
+            frame: frame + 1,
+            totalFrames,
+            bytesWritten,
+          });
+        }
 
         yield this.createProgress(
           "rendering",
@@ -482,6 +539,7 @@ export class ExportEngine {
       }
 
       videoSource.close();
+      logExport("video source closed", { bytesWritten });
       mediaEngine.disposeAllExportDecoders();
       mediaEngine.clearFrameCache();
       this.videoEngine?.clearVideoElementCache();
@@ -498,8 +556,12 @@ export class ExportEngine {
         bytesWritten,
       );
 
+      logExport("finalize start");
       await output.finalize();
+      logExport("finalize complete", { bytesWritten });
+      logExport("writable close start");
       await writableStream.close();
+      logExport("writable close complete", { bytesWritten });
 
       yield this.createProgress(
         "complete",
@@ -514,6 +576,9 @@ export class ExportEngine {
         stats: this.calculateStats(totalFrames, bytesWritten),
       };
     } catch (error) {
+      logExport("failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       try { await writableStream.abort(); } catch {}
       if (error && typeof error === "object" && "code" in error) {
         return { success: false, error: error as ExportError };
@@ -539,6 +604,7 @@ export class ExportEngine {
         getMediaEngine().disposeAllExportDecoders();
         getMediaEngine().clearFrameCache();
       } catch {}
+      logExport("cleanup complete");
     }
   }
 

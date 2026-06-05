@@ -116,24 +116,41 @@ export async function generateAvatarFromSequence(audioClipId: string): Promise<v
   const segments = await getAudioSegments(audioContext.clip, project);
   const metadata: AvatarGeneratedClipMetadata = {
     kind: "avatar-generated",
-    source: "sequence",
+    source: "video",
     audioClipId,
     characterId: AVATAR_CHARACTER_ID,
   };
-  const baseTrack = createTrack("image", avatarTrackName("sequence"));
+  const baseTrack = createTrack("video", avatarTrackName("sequence"));
+  const prepared = await prepareSequenceActionsAsVideoAssets(project, [
+    ...config.sequenceConfig.idle,
+    ...config.sequenceConfig.speaking,
+  ]);
+  const idleAssets = config.sequenceConfig.idle
+    .map((action) => prepared.assets.get(action.id))
+    .filter((asset): asset is AvatarVideoAsset => Boolean(asset));
+  const speakingAssets = config.sequenceConfig.speaking
+    .map((action) => prepared.assets.get(action.id))
+    .filter((asset): asset is AvatarVideoAsset => Boolean(asset));
   const animationTrack = {
     ...baseTrack,
-    clips: createSequenceClipsForSegments({
+    clips: createVideoClipsForSegments({
       trackId: baseTrack.id,
       audioStartTime: audioContext.clip.startTime,
       segments,
-      idleActions: config.sequenceConfig.idle,
-      speakingActions: config.sequenceConfig.speaking,
+      idleAssets,
+      speakingAssets,
       metadata,
+      project: {
+        ...project,
+        mediaLibrary: {
+          ...project.mediaLibrary,
+          items: [...project.mediaLibrary.items, ...prepared.mediaItems],
+        },
+      },
     }),
   };
 
-  insertTrackBefore(project, animationTrack, audioContext.track.id);
+  insertTrackBefore(project, animationTrack, audioContext.track.id, prepared.mediaItems);
 }
 
 export async function addAvatarActionOverlay(
@@ -189,11 +206,13 @@ export async function addAvatarActionOverlay(
       getSequenceActionDuration(action),
       parentContext.clip.duration,
     );
-    const blob = await renderActionSequence(project, action);
+    const blob = await renderActionSequence(project, action, duration);
+    const thumbnailUrl = await createSequenceActionThumbnail(project, action);
     const mediaItem = addGeneratedMediaItem(project, blob, `${action.name}.webm`, {
       duration,
       width: project.settings.width,
       height: project.settings.height,
+      thumbnailUrl,
     });
     extraMedia.push(mediaItem);
     overlayClip = createClip({
@@ -201,7 +220,7 @@ export async function addAvatarActionOverlay(
         trackId: baseOverlayTrack.id,
         startTime,
         duration,
-        transform: action.transform,
+        transform: defaultAvatarTransform(),
         metadata,
       });
   }
@@ -329,50 +348,43 @@ function createVideoClipsForSegments(params: {
   return clips;
 }
 
-function createSequenceClipsForSegments(params: {
-  trackId: string;
-  audioStartTime: number;
-  segments: AudioSegment[];
-  idleActions: AvatarSequenceAction[];
-  speakingActions: AvatarSequenceAction[];
-  metadata: AvatarGeneratedClipMetadata;
-}): Clip[] {
-  const clips: Clip[] = [];
-  params.segments.forEach((segment, segmentIndex) => {
-    const pool = segment.state === "speaking" ? params.speakingActions : params.idleActions;
-    const action = pool[segmentIndex % Math.max(1, pool.length)];
-    if (!action || action.frames.length === 0) return;
+async function prepareSequenceActionsAsVideoAssets(
+  project: Project,
+  actions: AvatarSequenceAction[],
+): Promise<{ assets: Map<string, AvatarVideoAsset>; mediaItems: MediaItem[] }> {
+  const assets = new Map<string, AvatarVideoAsset>();
+  const mediaItems: MediaItem[] = [];
+  const uniqueActions = Array.from(new Map(actions.map((action) => [action.id, action])).values());
 
-    let cursor = roundClipTime(params.audioStartTime + segment.startTime);
-    const segmentEnd = roundClipTime(params.audioStartTime + segment.startTime + segment.duration);
-    let frameIndex = 0;
-    while (segmentEnd - cursor > MIN_SEQUENCE_FRAME_DURATION_SEC) {
-      const frame = action.frames[frameIndex % action.frames.length];
-      const frameDuration = Math.max(
-        MIN_SEQUENCE_FRAME_DURATION_SEC,
-        frame.durationSec ?? action.frameDurationSec,
-      );
-      const nextCursor = roundClipTime(Math.min(segmentEnd, cursor + frameDuration));
-      const duration = Math.max(MIN_SEQUENCE_FRAME_DURATION_SEC, nextCursor - cursor);
-      clips.push(
-        createClip({
-          mediaId: frame.mediaId,
-          trackId: params.trackId,
-          startTime: cursor,
-          duration,
-          transform: action.transform,
-          metadata: params.metadata,
-        }),
-      );
-      cursor = nextCursor;
-      frameIndex += 1;
-    }
-  });
-  return clips;
-}
+  for (const action of uniqueActions) {
+    if (!action || action.frames.length === 0) continue;
 
-function roundClipTime(value: number): number {
-  return Math.round(value * 1000) / 1000;
+    const duration = 5;
+    const framePlan = expandActionFrames(action, duration);
+    const blob = await encodeFramePlanVideo(project, framePlan, duration, action.transform);
+    const thumbnailUrl = await createSequenceActionThumbnail(project, action);
+    const mediaItem = addGeneratedMediaItem(
+      project,
+      blob,
+      `${action.name}-sequence-action.webm`,
+      {
+        duration,
+        width: project.settings.width,
+        height: project.settings.height,
+        thumbnailUrl,
+      },
+    );
+    mediaItems.push(mediaItem);
+    assets.set(action.id, {
+      id: `sequence-video-${action.id}`,
+      mediaId: mediaItem.id,
+      name: action.name,
+      kind: action.kind,
+      transform: defaultAvatarTransform(),
+    });
+  }
+
+  return { assets, mediaItems };
 }
 
 function findClipContext(project: Project, clipId: string): { track: Track; clip: Clip } | null {
@@ -480,7 +492,7 @@ function addGeneratedMediaItem(
   project: Project,
   blob: Blob,
   name: string,
-  metadata: { duration: number; width: number; height: number },
+  metadata: { duration: number; width: number; height: number; thumbnailUrl?: string | null },
 ): MediaItem {
   return {
     id: makeId("media"),
@@ -498,7 +510,7 @@ function addGeneratedMediaItem(
       channels: project.settings.channels,
       fileSize: blob.size,
     },
-    thumbnailUrl: null,
+    thumbnailUrl: metadata.thumbnailUrl ?? null,
     waveformData: null,
     originalUrl: URL.createObjectURL(blob),
     sourceFile: {
@@ -509,8 +521,12 @@ function addGeneratedMediaItem(
   };
 }
 
-async function renderActionSequence(project: Project, action: AvatarSequenceAction): Promise<Blob> {
-  return recordFramePlan(project, expandActionFrames(action, getSequenceActionDuration(action)), getSequenceActionDuration(action));
+async function renderActionSequence(
+  project: Project,
+  action: AvatarSequenceAction,
+  duration: number,
+): Promise<Blob> {
+  return encodeFramePlanVideo(project, expandActionFrames(action, duration), duration, action.transform);
 }
 
 function expandActionFrames(action: AvatarSequenceAction, targetDuration: number): { mediaId: string; duration: number }[] {
@@ -536,81 +552,147 @@ function getSequenceActionDuration(action: AvatarSequenceAction): number {
   );
 }
 
-async function recordFramePlan(
+function drawFrameWithTransform(
+  context: CanvasRenderingContext2D,
+  bitmap: ImageBitmap,
+  transform: Transform,
+  canvasWidth: number,
+  canvasHeight: number,
+): void {
+  context.save();
+  context.globalAlpha = transform.opacity ?? 1;
+  context.translate(
+    canvasWidth / 2 + (transform.position?.x ?? 0),
+    canvasHeight / 2 + (transform.position?.y ?? 0),
+  );
+  context.rotate(((transform.rotation ?? 0) * Math.PI) / 180);
+  context.scale(transform.scale?.x ?? 1, transform.scale?.y ?? 1);
+
+  const anchor = transform.anchor ?? { x: 0.5, y: 0.5 };
+  const drawX = -bitmap.width * anchor.x;
+  const drawY = -bitmap.height * anchor.y;
+  context.drawImage(bitmap, drawX, drawY, bitmap.width, bitmap.height);
+  context.restore();
+}
+
+async function createSequenceActionThumbnail(
+  project: Project,
+  action: AvatarSequenceAction,
+): Promise<string | null> {
+  const firstFrame = action.frames[0];
+  if (!firstFrame) return null;
+  const media = project.mediaLibrary.items.find((item) => item.id === firstFrame.mediaId);
+  if (!media?.blob) return null;
+
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = project.settings.width;
+  sourceCanvas.height = project.settings.height;
+  const sourceContext = sourceCanvas.getContext("2d");
+  if (!sourceContext) return null;
+
+  const thumbnailCanvas = document.createElement("canvas");
+  thumbnailCanvas.width = 320;
+  thumbnailCanvas.height = Math.max(
+    1,
+    Math.round((project.settings.height / project.settings.width) * thumbnailCanvas.width),
+  );
+  const thumbnailContext = thumbnailCanvas.getContext("2d");
+  if (!thumbnailContext) return null;
+
+  try {
+    const bitmap = await createImageBitmap(media.blob);
+    sourceContext.clearRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+    drawFrameWithTransform(
+      sourceContext,
+      bitmap,
+      action.transform,
+      sourceCanvas.width,
+      sourceCanvas.height,
+    );
+    thumbnailContext.clearRect(0, 0, thumbnailCanvas.width, thumbnailCanvas.height);
+    thumbnailContext.drawImage(
+      sourceCanvas,
+      0,
+      0,
+      thumbnailCanvas.width,
+      thumbnailCanvas.height,
+    );
+    bitmap.close();
+    return thumbnailCanvas.toDataURL("image/png");
+  } catch {
+    return null;
+  }
+}
+
+async function encodeFramePlanVideo(
   project: Project,
   framePlan: { mediaId: string; duration: number }[],
   fallbackDuration: number,
+  transform: Transform = defaultAvatarTransform(),
 ): Promise<Blob> {
+  const mediabunny = await import("mediabunny");
+  const {
+    Output,
+    WebMOutputFormat,
+    BufferTarget,
+    CanvasSource,
+    getFirstEncodableVideoCodec,
+    QUALITY_MEDIUM,
+  } = mediabunny;
+
   const canvas = document.createElement("canvas");
   canvas.width = project.settings.width;
   canvas.height = project.settings.height;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("无法创建序列帧画布");
 
-  const stream = canvas.captureStream(project.settings.frameRate);
-  const recorder = new MediaRecorder(stream, {
-    mimeType: MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
-      ? "video/webm;codecs=vp9"
-      : "video/webm",
+  const outputFormat = new WebMOutputFormat();
+  const output = new Output({
+    format: outputFormat,
+    target: new BufferTarget(),
   });
-  const chunks: Blob[] = [];
-  recorder.ondataavailable = (event) => {
-    if (event.data.size > 0) chunks.push(event.data);
-  };
+  const videoCodec = await getFirstEncodableVideoCodec(
+    outputFormat.getSupportedVideoCodecs(),
+    { width: canvas.width, height: canvas.height },
+  );
+  if (!videoCodec) {
+    throw new Error("当前浏览器不支持序列帧视频编码");
+  }
+  const videoSource = new CanvasSource(canvas, {
+    codec: videoCodec,
+    bitrate: QUALITY_MEDIUM,
+    alpha: "keep",
+  });
+  output.addVideoTrack(videoSource, {
+    frameRate: Math.max(1, project.settings.frameRate || 30),
+  });
+
+  await output.start();
 
   const mediaById = new Map(project.mediaLibrary.items.map((item) => [item.id, item]));
-  try {
-    recorder.start();
+  const plan = framePlan.length > 0
+    ? framePlan
+    : [{ mediaId: "", duration: fallbackDuration }];
+  let timestamp = 0;
 
-    const plan = framePlan.length > 0
-      ? framePlan
-      : [{ mediaId: "", duration: fallbackDuration }];
-    for (const frame of plan) {
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      const media = mediaById.get(frame.mediaId);
-      if (media?.blob) {
-        const bitmap = await createImageBitmap(media.blob);
-        drawContain(context, bitmap, canvas.width, canvas.height);
-        bitmap.close();
-      }
-      await wait(frame.duration * 1000);
+  for (const frame of plan) {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    const media = mediaById.get(frame.mediaId);
+    if (media?.blob) {
+      const bitmap = await createImageBitmap(media.blob);
+      drawFrameWithTransform(context, bitmap, transform, canvas.width, canvas.height);
+      bitmap.close();
     }
 
-    const stopped = new Promise<Blob>((resolve) => {
-      recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType }));
-    });
-    recorder.stop();
-    return stopped;
-  } finally {
-    if (recorder.state !== "inactive") {
-      try {
-        recorder.stop();
-      } catch {
-        // Recorder may already be stopping after a successful render.
-      }
-    }
-    stream.getTracks().forEach((track) => track.stop());
+    const duration = Math.max(MIN_SEQUENCE_FRAME_DURATION_SEC, frame.duration);
+    await videoSource.add(timestamp, duration);
+    timestamp += duration;
   }
-}
 
-function drawContain(
-  context: CanvasRenderingContext2D,
-  bitmap: ImageBitmap,
-  width: number,
-  height: number,
-): void {
-  const scale = Math.min(width / bitmap.width, height / bitmap.height);
-  const drawWidth = bitmap.width * scale;
-  const drawHeight = bitmap.height * scale;
-  context.drawImage(
-    bitmap,
-    (width - drawWidth) / 2,
-    (height - drawHeight) / 2,
-    drawWidth,
-    drawHeight,
-  );
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
+  videoSource.close();
+  await output.finalize();
+  if (!output.target.buffer) {
+    throw new Error("序列帧视频编码失败");
+  }
+  return new Blob([output.target.buffer], { type: "video/webm" });
 }

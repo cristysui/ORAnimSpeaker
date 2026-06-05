@@ -31,8 +31,11 @@ export const AvatarThumbnail: React.FC<{
     const video = document.createElement("video");
     const url = URL.createObjectURL(media.blob);
     let cancelled = false;
+    let captured = false;
+    let timeoutId: number | null = null;
 
     const cleanup = () => {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
       video.pause();
       video.removeAttribute("src");
       video.load();
@@ -40,23 +43,60 @@ export const AvatarThumbnail: React.FC<{
     };
 
     const captureFrame = () => {
-      if (cancelled || video.videoWidth <= 0 || video.videoHeight <= 0) return;
+      if (
+        cancelled ||
+        captured ||
+        video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+        video.videoWidth <= 0 ||
+        video.videoHeight <= 0
+      ) {
+        return;
+      }
       const canvas = document.createElement("canvas");
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const context = canvas.getContext("2d");
       if (!context) return;
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      captured = true;
       setFirstFrameUrl(canvas.toDataURL("image/jpeg", 0.78));
+    };
+
+    const requestCapture = () => {
+      if (cancelled || captured) return;
+      if ("requestVideoFrameCallback" in video) {
+        video.requestVideoFrameCallback(() => captureFrame());
+      } else {
+        window.requestAnimationFrame(captureFrame);
+      }
+    };
+
+    const seekToFirstFrame = () => {
+      if (cancelled || captured) return;
+      try {
+        const targetTime = Number.isFinite(video.duration) && video.duration > 0
+          ? Math.min(0.001, video.duration / 2)
+          : 0;
+        if (Math.abs(video.currentTime - targetTime) > 0.0001) {
+          video.currentTime = targetTime;
+        } else {
+          requestCapture();
+        }
+      } catch {
+        requestCapture();
+      }
     };
 
     video.muted = true;
     video.playsInline = true;
-    video.preload = "metadata";
-    video.onloadeddata = captureFrame;
-    video.onseeked = captureFrame;
+    video.preload = "auto";
+    video.onloadedmetadata = seekToFirstFrame;
+    video.onloadeddata = requestCapture;
+    video.oncanplay = requestCapture;
+    video.onseeked = requestCapture;
     video.src = url;
     video.load();
+    timeoutId = window.setTimeout(requestCapture, 2000);
 
     return () => {
       cancelled = true;

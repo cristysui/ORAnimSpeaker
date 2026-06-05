@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { Eraser, Film, GripVertical, ImagePlus, Plus, Trash2, Upload } from "lucide-react";
 import { useProjectStore } from "../../stores/project-store";
+import { useTimelineStore } from "../../stores/timeline-store";
 import { useUIStore } from "../../stores/ui-store";
 import {
   appendAvatarSequenceAction,
@@ -40,6 +41,7 @@ type RequiredActionKind = "idle" | "speaking";
 
 const REQUIRED_KINDS: RequiredActionKind[] = ["idle", "speaking"];
 const ENABLE_BACKGROUND_REMOVAL = false;
+const VIDEO_ACCEPT = "video/*,.mp4,.m4v,.mov,.webm,.mkv";
 
 const clampFrameDuration = (value: number): number => {
   return Math.min(2, Math.max(0.1, value || DEFAULT_FRAME_DURATION_SEC));
@@ -87,14 +89,36 @@ export const AvatarPanel: React.FC = () => {
     selectConfig({ source: "sequence", id: actionId });
   };
 
-  const importVideos = async (kind: AvatarActionKind, files: FileList | null) => {
+  const importVideos = async (kind: AvatarActionKind, files: File[] | FileList | null) => {
     if (!files?.length) return;
+    const fileList = Array.from(files);
     setBusy(true);
+    setBackgroundRemovalMessage(null);
+    const importStart = performance.now();
+    console.info("[Avatar] video action import start", {
+      kind,
+      count: fileList.length,
+      files: fileList.map((file) => ({
+        name: file.name,
+        type: file.type,
+        size: file.size,
+      })),
+    });
     try {
       const assets: AvatarVideoAsset[] = [];
-      for (const file of Array.from(files)) {
-        const result = await importMedia(file);
-        if (!result.success || !result.actionId) continue;
+      for (const file of fileList) {
+        const thumbnailUrl = await createVideoFirstFrameThumbnail(file);
+        const result = await importMedia(file, {
+          browserVideoMetadata: true,
+          thumbnailUrl,
+        });
+        if (!result.success || !result.actionId) {
+          console.warn("[Avatar] video action import skipped", {
+            file: file.name,
+            error: result.error?.message,
+          });
+          continue;
+        }
         assets.push({
           id: crypto.randomUUID(),
           mediaId: result.actionId,
@@ -104,6 +128,19 @@ export const AvatarPanel: React.FC = () => {
         });
       }
       if (assets.length > 0) appendAvatarVideoAssets(assets);
+      if (assets.length === 0) {
+        setBackgroundRemovalMessage("动作视频导入失败，请换一个浏览器可播放的视频格式。");
+      }
+      console.info("[Avatar] video action import complete", {
+        kind,
+        imported: assets.length,
+        elapsedMs: Math.round(performance.now() - importStart),
+      });
+    } catch (error) {
+      console.error("[Avatar] video action import failed", error);
+      setBackgroundRemovalMessage(
+        `动作视频导入失败：${error instanceof Error ? error.message : "未知错误"}`,
+      );
     } finally {
       setBusy(false);
     }
@@ -403,7 +440,7 @@ const VideoActionSlot: React.FC<{
   required?: boolean;
   disabled: boolean;
   selectedId: string | null;
-  onFiles: (kind: AvatarActionKind, files: FileList | null) => void;
+  onFiles: (kind: AvatarActionKind, files: File[] | FileList | null) => void;
   onSelect: (assetId: string) => void;
   onDelete: (assetId: string) => void;
   onRemoveBackground: (asset: AvatarVideoAsset) => void;
@@ -412,7 +449,6 @@ const VideoActionSlot: React.FC<{
   kind,
   assets,
   required,
-  disabled,
   selectedId,
   onFiles,
   onSelect,
@@ -422,6 +458,14 @@ const VideoActionSlot: React.FC<{
 }) => {
   const inputId = `avatar-video-upload-${kind}`;
   const hasAssets = assets.length > 0;
+  const pickFiles = () => {
+    console.info("[Avatar] video action picker open", { kind, inputId });
+    openAvatarVideoPicker({
+      kind,
+      inputId,
+      onFiles: (files) => onFiles(kind, files),
+    });
+  };
 
   return (
     <div
@@ -449,19 +493,8 @@ const VideoActionSlot: React.FC<{
           ))}
         </div>
       ) : (
-        <UploadLabel inputId={inputId} />
+        <UploadLabel onPick={pickFiles} />
       )}
-      <input
-        id={inputId}
-        type="file"
-        accept="video/*"
-        className="hidden"
-        data-busy={disabled ? "true" : undefined}
-        onChange={(event) => {
-          void onFiles(kind, event.target.files);
-          event.currentTarget.value = "";
-        }}
-      />
     </div>
   );
 };
@@ -504,27 +537,24 @@ const VideoCustomActionCard: React.FC<{
 
 const VideoAddActionCard: React.FC<{
   disabled: boolean;
-  onFiles: (kind: AvatarActionKind, files: FileList | null) => void;
-}> = ({ disabled, onFiles }) => {
+  onFiles: (kind: AvatarActionKind, files: File[] | FileList | null) => void;
+}> = ({ onFiles }) => {
   const inputId = "avatar-video-upload-custom-action";
+  const pickFiles = () => {
+    console.info("[Avatar] video action picker open", { kind: "action", inputId });
+    openAvatarVideoPicker({
+      kind: "action",
+      inputId,
+      onFiles: (files) => onFiles("action", files),
+    });
+  };
   return (
     <div className="flex min-h-[142px] flex-col overflow-hidden rounded-lg border border-dashed border-border bg-bg text-xs hover:border-accent">
       <div className="flex items-center justify-between border-b border-border px-2 py-1.5 text-fg-2">
         <span>添加手动动作</span>
         <Plus className="h-3.5 w-3.5" />
       </div>
-      <UploadLabel inputId={inputId} />
-      <input
-        id={inputId}
-        type="file"
-        accept="video/*"
-        className="hidden"
-        data-busy={disabled ? "true" : undefined}
-        onChange={(event) => {
-          void onFiles("action", event.target.files);
-          event.currentTarget.value = "";
-        }}
-      />
+      <UploadLabel onPick={pickFiles} />
     </div>
   );
 };
@@ -602,7 +632,16 @@ const SequenceActionSlot: React.FC<{
   onReorderFrame,
 }) => {
   const inputId = action ? `avatar-sequence-add-${action.id}` : `avatar-sequence-create-${kind}`;
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const selected = action ? selectedId === action.id : false;
+  const pickFiles = () => {
+    console.info("[Avatar] sequence picker open", {
+      kind,
+      inputId,
+      actionId: action?.id ?? null,
+    });
+    inputRef.current?.click();
+  };
 
   return (
     <div
@@ -672,17 +711,26 @@ const SequenceActionSlot: React.FC<{
           </div>
         </div>
       ) : (
-        <UploadLabel inputId={inputId} />
+        <UploadLabel onPick={pickFiles} />
       )}
 
       <input
+        ref={inputRef}
         id={inputId}
         type="file"
         accept="image/*"
         multiple
         className="hidden"
         data-busy={disabled ? "true" : undefined}
+        onClick={() => {
+          console.info("[Avatar] sequence input click", { kind, inputId });
+        }}
         onChange={(event) => {
+          console.info("[Avatar] sequence input change", {
+            kind,
+            inputId,
+            count: event.target.files?.length ?? 0,
+          });
           if (action) void onAddFrames(action, event.target.files);
           else void onCreate(event.target.files);
           event.currentTarget.value = "";
@@ -788,12 +836,171 @@ const SequenceAddActionCard: React.FC<{
   );
 };
 
-const UploadLabel: React.FC<{ inputId: string }> = ({ inputId }) => (
-  <label htmlFor={inputId} className="group flex flex-1 cursor-pointer items-center justify-center p-3">
+function openAvatarVideoPicker(params: {
+  kind: AvatarActionKind;
+  inputId: string;
+  onFiles: (files: File[] | null) => void;
+}) {
+  const timeline = useTimelineStore.getState();
+  if (timeline.playbackState === "playing") {
+    timeline.pause();
+  }
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = VIDEO_ACCEPT;
+  input.style.position = "fixed";
+  input.style.left = "-9999px";
+  input.style.top = "0";
+  input.style.opacity = "0";
+
+  let cleanupTimer: number | null = null;
+  const cleanup = () => {
+    if (cleanupTimer !== null) window.clearTimeout(cleanupTimer);
+    input.onchange = null;
+    input.onclick = null;
+    input.remove();
+  };
+
+  input.onclick = () => {
+    console.info("[Avatar] video action transient input click", {
+      kind: params.kind,
+      inputId: params.inputId,
+    });
+  };
+  input.onchange = () => {
+    console.info("[Avatar] video action transient input change", {
+      kind: params.kind,
+      inputId: params.inputId,
+      count: input.files?.length ?? 0,
+    });
+    params.onFiles(input.files ? Array.from(input.files) : null);
+    window.setTimeout(cleanup, 0);
+  };
+
+  document.body.appendChild(input);
+  cleanupTimer = window.setTimeout(cleanup, 60000);
+  input.click();
+}
+
+function createVideoFirstFrameThumbnail(file: File): Promise<string | null> {
+  return new Promise((resolve) => {
+    if (!file.type.startsWith("video/") && !/\.(mp4|m4v|mov|webm|mkv)$/i.test(file.name)) {
+      resolve(null);
+      return;
+    }
+
+    const video = document.createElement("video");
+    const url = URL.createObjectURL(file);
+    let settled = false;
+
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+      URL.revokeObjectURL(url);
+    };
+
+    const finish = (thumbnailUrl: string | null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(thumbnailUrl);
+    };
+
+    const capture = () => {
+      if (
+        video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+        video.videoWidth <= 0 ||
+        video.videoHeight <= 0
+      ) {
+        return false;
+      }
+
+      try {
+        const width = 320;
+        const height = Math.max(1, Math.round((video.videoHeight / video.videoWidth) * width));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        if (!context) return false;
+        context.drawImage(video, 0, 0, width, height);
+        finish(canvas.toDataURL("image/png"));
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const requestCapture = () => {
+      if (settled || capture()) return;
+      if ("requestVideoFrameCallback" in video) {
+        video.requestVideoFrameCallback(() => {
+          capture();
+        });
+      } else {
+        window.requestAnimationFrame(capture);
+      }
+    };
+
+    const seekOrCapture = () => {
+      if (settled) return;
+      try {
+        const targetTime = Number.isFinite(video.duration) && video.duration > 0
+          ? Math.min(0.05, video.duration / 2)
+          : 0;
+        if (targetTime > 0 && Math.abs(video.currentTime - targetTime) > 0.001) {
+          video.currentTime = targetTime;
+          return;
+        }
+      } catch {
+        // Fall through to requestCapture.
+      }
+      requestCapture();
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      if (settled) return;
+      if (!capture()) finish(null);
+    }, 3000);
+
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.onloadedmetadata = seekOrCapture;
+    video.onloadeddata = requestCapture;
+    video.oncanplay = requestCapture;
+    video.onseeked = requestCapture;
+    video.onerror = () => finish(null);
+    video.src = url;
+    video.load();
+
+    // Some browsers only produce a drawable frame after a tiny muted play.
+    window.setTimeout(() => {
+      if (settled || video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return;
+      video.play().then(() => {
+        video.pause();
+        requestCapture();
+      }).catch(() => {});
+    }, 250);
+  });
+}
+
+const UploadLabel: React.FC<{ onPick: () => void }> = ({ onPick }) => (
+  <button
+    type="button"
+    className="group flex flex-1 cursor-pointer items-center justify-center p-3"
+    onClick={(event) => {
+      event.stopPropagation();
+      onPick();
+    }}
+  >
     <div className="flex h-12 w-20 items-center justify-center rounded border border-dashed border-border bg-bg-2 text-fg-muted group-hover:text-accent">
       <Upload className="h-5 w-5" />
     </div>
-  </label>
+  </button>
 );
 
 const DeleteButton: React.FC<{ title: string; onDelete: () => void }> = ({ title, onDelete }) => (

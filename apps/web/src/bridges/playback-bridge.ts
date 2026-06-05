@@ -271,7 +271,12 @@ export class PlaybackBridge {
     if (this.playbackController) {
       this.playbackController.seek(time);
     }
-    useTimelineStore.getState().updateScrubPosition(time);
+    const timeline = useTimelineStore.getState();
+    if (timeline.isScrubbing) {
+      timeline.updateScrubPosition(time);
+    } else {
+      timeline.seekTo(time);
+    }
   }
 
   /**

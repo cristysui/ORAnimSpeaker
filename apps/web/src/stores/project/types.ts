@@ -113,7 +113,10 @@ export interface ProjectState {
   renameProject: (name: string) => Promise<ActionResult>;
   updateSettings: (settings: Partial<ProjectSettings>) => Promise<ActionResult>;
 
-  importMedia: (file: File) => Promise<ActionResult>;
+  importMedia: (
+    file: File,
+    options?: { browserVideoMetadata?: boolean; thumbnailUrl?: string | null },
+  ) => Promise<ActionResult>;
   deleteMedia: (mediaId: string) => Promise<ActionResult>;
   renameMedia: (mediaId: string, name: string) => Promise<ActionResult>;
   getMediaItem: (mediaId: string) => MediaItem | undefined;
