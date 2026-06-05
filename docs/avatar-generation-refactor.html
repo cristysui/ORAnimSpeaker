@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>角色动画生成能力改造说明</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f7f9;
+        --paper: #ffffff;
+        --ink: #1f2933;
+        --muted: #64748b;
+        --line: #d9e2ec;
+        --accent: #0f766e;
+        --accent-soft: #e6f5f2;
+        --warn: #92400e;
+        --warn-soft: #fff7ed;
+        --code: #111827;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Microsoft YaHei", sans-serif;
+        line-height: 1.68;
+      }
+
+      main {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 40px 24px 72px;
+      }
+
+      header {
+        padding: 34px 36px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--paper);
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        line-height: 1.25;
+      }
+
+      h1 {
+        font-size: 32px;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        margin-top: 34px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--line);
+        font-size: 22px;
+      }
+
+      h3 {
+        margin-top: 22px;
+        font-size: 17px;
+      }
+
+      p {
+        margin: 10px 0 0;
+      }
+
+      ul,
+      ol {
+        margin: 10px 0 0;
+        padding-left: 22px;
+      }
+
+      li {
+        margin: 6px 0;
+      }
+
+      code {
+        border-radius: 4px;
+        background: #eef2f7;
+        color: var(--code);
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 0.92em;
+        padding: 1px 5px;
+      }
+
+      table {
+        width: 100%;
+        margin-top: 12px;
+        border-collapse: collapse;
+        background: var(--paper);
+        font-size: 14px;
+      }
+
+      th,
+      td {
+        border: 1px solid var(--line);
+        padding: 10px 12px;
+        vertical-align: top;
+        text-align: left;
+      }
+
+      th {
+        background: #f1f5f9;
+        font-weight: 650;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: #f8fafc;
+        color: var(--muted);
+        font-size: 13px;
+        padding: 3px 10px;
+      }
+
+      .section {
+        margin-top: 18px;
+        padding: 22px 24px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--paper);
+      }
+
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 18px;
+      }
+
+      .summary-card {
+        min-height: 132px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fbfcfe;
+        padding: 16px;
+      }
+
+      .summary-card strong {
+        display: block;
+        margin-bottom: 7px;
+        color: var(--accent);
+      }
+
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .step {
+        position: relative;
+        min-height: 110px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fbfcfe;
+        padding: 14px 12px;
+      }
+
+      .step b {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--accent);
+      }
+
+      .note {
+        margin-top: 14px;
+        border-left: 4px solid var(--accent);
+        border-radius: 6px;
+        background: var(--accent-soft);
+        padding: 12px 14px;
+      }
+
+      .warning {
+        border-left-color: var(--warn);
+        background: var(--warn-soft);
+      }
+
+      .file-list {
+        display: grid;
+        grid-template-columns: 1.1fr 1.8fr;
+        gap: 0;
+        margin-top: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .file-list div {
+        border-bottom: 1px solid var(--line);
+        padding: 10px 12px;
+      }
+
+      .file-list div:nth-child(odd) {
+        background: #f8fafc;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 13px;
+      }
+
+      .file-list div:nth-last-child(-n + 2) {
+        border-bottom: 0;
+      }
+
+      @media (max-width: 860px) {
+        main {
+          padding: 24px 14px 48px;
+        }
+
+        header,
+        .section {
+          padding: 20px 16px;
+        }
+
+        .summary-grid,
+        .flow,
+        .file-list {
+          grid-template-columns: 1fr;
+        }
+
+        .file-list div:nth-last-child(-n + 2) {
+          border-bottom: 1px solid var(--line);
+        }
+
+        .file-list div:last-child {
+          border-bottom: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>角色动画生成能力改造说明</h1>
+        <p>
+          本文总结当前项目在原有视频编辑器基础上，围绕“序列帧图片生成视频”和“动作视频生成视频/动作覆盖”两类角色动画能力做的改造。
+          重点覆盖数据结构、素材配置、音频驱动生成、手动动作覆盖、预览合成和近期修正点。
+        </p>
+        <div class="meta">
+          <span class="pill">项目：voice-character-tool</span>
+          <span class="pill">应用：apps/web</span>
+          <span class="pill">整理日期：2026-06-05</span>
+          <span class="pill">核心模块：features/avatar</span>
+        </div>
+      </header>
+
+      <section class="section">
+        <h2>一、改造目标</h2>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <strong>序列帧图片生成视频</strong>
+            <p>
+              支持将多张角色图片按固定或单帧时长组成动作序列，并在生成时编码为 WebM 视频片段，作为时间线中的角色动画素材使用。
+            </p>
+          </div>
+          <div class="summary-card">
+            <strong>动作视频生成角色动画</strong>
+            <p>
+              支持直接配置静止、说话、手动动作视频素材，根据音频分析结果自动铺设 idle/speaking 片段，也可在播放头位置插入动作覆盖片段。
+            </p>
+          </div>
+          <div class="summary-card">
+            <strong>统一时间线承载</strong>
+            <p>
+              生成结果不另建独立播放器，而是落到原项目 timeline 的轨道、clip、mediaLibrary 中，复用现有预览、导出和编辑能力。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>二、核心文件</h2>
+        <div class="file-list">
+          <div>apps/web/src/features/avatar/avatar-types.ts</div>
+          <div>定义 avatar 配置、动作来源、序列帧、生成片段和动作覆盖片段的 metadata 类型。</div>
+          <div>apps/web/src/features/avatar/avatar-project.ts</div>
+          <div>读写项目 metadata.avatar，提供动作增删改、序列帧增删排序、素材替换等配置持久化能力。</div>
+          <div>apps/web/src/features/avatar/AvatarPanel.tsx</div>
+          <div>角色素材配置 UI。包含视频配置和序列帧配置两个 tab。</div>
+          <div>apps/web/src/features/avatar/AvatarGenerationStrip.tsx</div>
+          <div>在存在音频片段且配置完整时，提供“从序列帧生成动画”和“从视频生成动画”入口。</div>
+          <div>apps/web/src/features/avatar/AvatarActionConsole.tsx</div>
+          <div>展示已配置的手动动作，并把动作插入到已生成角色片段上方作为 overlay。</div>
+          <div>apps/web/src/features/avatar/avatar-timeline.ts</div>
+          <div>生成链路主逻辑：音频分段、生成角色轨道、序列帧编码 WebM、插入动作覆盖轨道。</div>
+          <div>apps/web/src/components/editor/Preview.tsx</div>
+          <div>预览合成适配：识别 avatar metadata、处理动作覆盖时的父片段隐藏、禁用不适合的原生播放路径。</div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>三、数据模型改造</h2>
+        <p>
+          角色能力挂在项目级 metadata 上：<code>project.metadata.avatar</code>。
+          配置分成 <code>videoConfig</code> 和 <code>sequenceConfig</code>，二者都包含
+          <code>idle</code>、<code>speaking</code>、<code>actions</code> 三类动作。
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>类型</th>
+              <th>用途</th>
+              <th>关键字段</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>AvatarVideoAsset</code></td>
+              <td>单个视频动作素材。</td>
+              <td><code>id</code>、<code>mediaId</code>、<code>name</code>、<code>kind</code>、<code>transform</code></td>
+            </tr>
+            <tr>
+              <td><code>AvatarSequenceAction</code></td>
+              <td>一个由多张图片组成的序列帧动作。</td>
+              <td><code>id</code>、<code>name</code>、<code>kind</code>、<code>frameDurationSec</code>、<code>frames</code>、<code>transform</code></td>
+            </tr>
+            <tr>
+              <td><code>AvatarSequenceFrame</code></td>
+              <td>序列帧动作中的单张图片。</td>
+              <td><code>id</code>、<code>mediaId</code>、<code>name</code>、<code>durationSec</code></td>
+            </tr>
+            <tr>
+              <td><code>AvatarGeneratedClipMetadata</code></td>
+              <td>标记自动生成出来的角色动画 clip。</td>
+              <td><code>kind: "avatar-generated"</code>、<code>source</code>、<code>audioClipId</code>、<code>characterId</code></td>
+            </tr>
+            <tr>
+              <td><code>AvatarActionOverlayMetadata</code></td>
+              <td>标记手动动作覆盖 clip，并绑定父角色 clip。</td>
+              <td><code>kind: "avatar-action-overlay"</code>、<code>source</code>、<code>parentGeneratedClipId</code>、<code>actionId</code></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="note">
+          近期修正点：<code>generateAvatarFromSequence</code> 生成的角色片段 metadata 已从
+          <code>source: "video"</code> 修正为 <code>source: "sequence"</code>。这让预览层能识别序列帧生成片段，并避开不适合该类合成的原生视频播放路径。
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>四、素材配置能力</h2>
+        <h3>1. 动作视频配置</h3>
+        <ul>
+          <li>入口位于 <code>AvatarPanel.tsx</code> 的“视频配置” tab。</li>
+          <li>静止和说话为必填动作；手动动作可继续添加、重命名、删除。</li>
+          <li>导入视频时会通过浏览器读取视频 metadata，并生成首帧缩略图。</li>
+          <li>每个视频动作保存为 <code>AvatarVideoAsset</code>，实际文件进入项目 <code>mediaLibrary</code>。</li>
+        </ul>
+
+        <h3>2. 序列帧图片配置</h3>
+        <ul>
+          <li>入口位于 <code>AvatarPanel.tsx</code> 的“序列帧配置” tab。</li>
+          <li>支持设置全局单图时长，当前限制为 0.1 秒到 2 秒。</li>
+          <li>每个动作可一次导入多张图片，形成 <code>AvatarSequenceAction.frames</code>。</li>
+          <li>支持继续添加帧、删除单帧、拖拽排序、重命名手动动作。</li>
+          <li>静止和说话动作至少各有一个非空序列，才允许从序列帧生成角色动画。</li>
+        </ul>
+      </section>
+
+      <section class="section">
+        <h2>五、音频驱动生成流程</h2>
+        <p>
+          <code>AvatarGenerationStrip.tsx</code> 会扫描时间线中的音频 clip。只要对应类型配置完整，就显示生成按钮。
+          生成入口分别调用 <code>generateAvatarFromVideo(audioClipId)</code> 和
+          <code>generateAvatarFromSequence(audioClipId)</code>。
+        </p>
+        <div class="flow">
+          <div class="step">
+            <b>1. 找到音频</b>
+            根据用户选择的 <code>audioClipId</code> 在项目 timeline 中定位音频 clip 和所在轨道。
+          </div>
+          <div class="step">
+            <b>2. 分析音频</b>
+            调用 <code>analyzeAudioBlob</code>，得到 speaking/idle 分段，并裁剪到音频时长范围内。
+          </div>
+          <div class="step">
+            <b>3. 规范分段</b>
+            合并连续同状态片段，过滤过短变化，并把开头 2 秒内进入说话的 idle 合并为 speaking。
+          </div>
+          <div class="step">
+            <b>4. 生成 clip</b>
+            按分段状态从 idle 或 speaking 素材池循环取素材，生成角色动画 clip。
+          </div>
+          <div class="step">
+            <b>5. 插入轨道</b>
+            新建“人物视频动画”或“人物序列帧动画”轨道，插入到音频轨道之前。
+          </div>
+        </div>
+
+        <h3>动作视频路径</h3>
+        <p>
+          视频路径直接使用配置好的 <code>AvatarVideoAsset.mediaId</code>。
+          每个 speaking/idle 分段会按素材原始时长切片，不足时循环取同类素材，直到覆盖对应音频分段。
+        </p>
+
+        <h3>序列帧路径</h3>
+        <p>
+          序列帧路径会先把 idle 和 speaking 的 <code>AvatarSequenceAction</code> 预渲染成临时 WebM 视频素材。
+          当前每个序列动作会展开为约 5 秒的循环帧计划，再通过 Mediabunny 的 <code>CanvasSource</code>
+          编码为带 alpha 保留的 WebM。生成出的媒体项随后进入 <code>mediaLibrary</code>，再复用视频路径的分段铺设逻辑。
+        </p>
+      </section>
+
+      <section class="section">
+        <h2>六、手动动作覆盖流程</h2>
+        <p>
+          <code>AvatarActionConsole.tsx</code> 负责展示视频动作和序列帧动作。用户点击动作时，系统会找到播放头所在的
+          avatar-generated 父角色片段；如果正在播放，会先暂停并同步播放头，再插入动作覆盖。
+        </p>
+        <ol>
+          <li>调用 <code>addAvatarActionOverlay(parentClipId, source, actionId)</code>。</li>
+          <li>根据播放头时间，将动作开始时间限制在父角色 clip 的时间范围内。</li>
+          <li>生成 <code>kind: "avatar-action-overlay"</code> metadata，并写入 <code>parentGeneratedClipId</code>。</li>
+          <li>视频动作直接创建 overlay clip；序列帧动作先按动作自身总时长渲染 WebM，再创建 overlay clip。</li>
+          <li>overlay clip 被追加到已有动作覆盖轨道，或新建“人物视频动作覆盖 / 人物序列帧动作覆盖”轨道。</li>
+        </ol>
+        <div class="note">
+          这个设计让手动动作不是破坏性替换父角色轨道，而是作为上层覆盖片段存在。预览时再根据
+          <code>parentGeneratedClipId</code> 临时隐藏对应父片段，保证动作期间不会出现底层角色和动作角色重影。
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>七、预览合成适配</h2>
+        <p>
+          <code>Preview.tsx</code> 增加了 avatar 相关 clip 识别函数，用来处理普通生成片段、序列帧生成片段和动作覆盖片段。
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>逻辑</th>
+              <th>目的</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>isAvatarGeneratedClip</code></td>
+              <td>识别自动生成的角色动画 clip。</td>
+            </tr>
+            <tr>
+              <td><code>isAvatarGeneratedSequenceClip</code></td>
+              <td>识别来源为 <code>sequence</code> 的角色动画 clip。</td>
+            </tr>
+            <tr>
+              <td><code>isAvatarActionOverlayClip</code></td>
+              <td>识别手动动作覆盖 clip。</td>
+            </tr>
+            <tr>
+              <td><code>getAvatarOverlayParentIdsAtTime</code></td>
+              <td>在某个时间点收集正在生效的 overlay 绑定的父 clip id。</td>
+            </tr>
+            <tr>
+              <td><code>shouldSuppressClipForAvatarOverlay</code></td>
+              <td>只隐藏被当前 overlay 绑定的父角色片段。</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>本次预览修正</h3>
+        <ul>
+          <li>旧逻辑只要存在任意动作 overlay，就隐藏所有 <code>avatar-generated</code> 片段，容易误伤同一时间线上的其它角色片段。</li>
+          <li>新逻辑按 <code>parentGeneratedClipId</code> 精确匹配，只隐藏当前 overlay 对应的父片段。</li>
+          <li>多轨 canvas 渲染路径也使用同样规则，从已解码帧中移除被 overlay 覆盖的父帧。</li>
+          <li>当存在 <code>source: "sequence"</code> 的生成片段时，禁用原生视频直出路径，走多轨 canvas 合成路径，避免序列帧类角色合成和覆盖关系失真。</li>
+          <li>如果存在多个视频轨道未来还有 clip，也禁用原生播放路径，防止原生单轨播放无法正确表现多层合成。</li>
+        </ul>
+      </section>
+
+      <section class="section">
+        <h2>八、生成物在时间线中的表现</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>生成类型</th>
+              <th>轨道名称</th>
+              <th>clip metadata</th>
+              <th>媒体形态</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>动作视频生成</td>
+              <td>人物视频动画</td>
+              <td><code>kind: "avatar-generated", source: "video"</code></td>
+              <td>复用用户导入的视频媒体。</td>
+            </tr>
+            <tr>
+              <td>序列帧生成</td>
+              <td>人物序列帧动画</td>
+              <td><code>kind: "avatar-generated", source: "sequence"</code></td>
+              <td>序列帧图片先编码为 WebM，再作为视频媒体铺设。</td>
+            </tr>
+            <tr>
+              <td>视频动作覆盖</td>
+              <td>人物视频动作覆盖</td>
+              <td><code>kind: "avatar-action-overlay", source: "video"</code></td>
+              <td>复用用户配置的手动动作视频。</td>
+            </tr>
+            <tr>
+              <td>序列帧动作覆盖</td>
+              <td>人物序列帧动作覆盖</td>
+              <td><code>kind: "avatar-action-overlay", source: "sequence"</code></td>
+              <td>按动作帧总时长编码为 WebM 后插入。</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="section">
+        <h2>九、当前限制与注意事项</h2>
+        <ul>
+          <li>序列帧编码依赖浏览器支持 Mediabunny 可用的视频编码器；不支持时会提示“当前浏览器不支持序列帧视频编码”。</li>
+          <li>序列帧 idle/speaking 预渲染目前使用固定 5 秒循环素材，再由分段铺设逻辑复用。</li>
+          <li>单图时长输入限制为 0.1 到 2 秒；底层编码保护最小时长为 0.001 秒。</li>
+          <li>背景移除相关按钮当前由 <code>ENABLE_BACKGROUND_REMOVAL = false</code> 关闭，代码路径保留。</li>
+          <li>动作覆盖依赖父角色 clip id。若后续支持复制、拆分、合并角色片段，需要同步维护 <code>parentGeneratedClipId</code> 关系。</li>
+          <li>当前生成逻辑直接更新 project store，未通过完整 ActionExecutor 执行；配置保存有 actionHistory，时间线生成插入本身还可继续补齐撤销/重做一致性。</li>
+        </ul>
+      </section>
+
+      <section class="section">
+        <h2>十、后续建议</h2>
+        <ul>
+          <li>为 <code>generateAvatarFromSequence</code> 和 overlay 插入补充单元测试，覆盖 metadata source、父片段绑定和轨道插入顺序。</li>
+          <li>把序列帧预渲染时长从固定 5 秒升级为可配置或按音频分段动态生成，减少重复媒体和无效编码。</li>
+          <li>为动作覆盖提供时间线可视化标识，例如在 clip 标题中展示动作名和来源。</li>
+          <li>补齐生成动作的撤销/重做能力，让时间线插入和 mediaLibrary 增量与项目历史保持一致。</li>
+          <li>增加导出链路回归验证，确认序列帧 WebM alpha、overlay 隐藏父片段、多轨合成在最终导出中表现一致。</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>
