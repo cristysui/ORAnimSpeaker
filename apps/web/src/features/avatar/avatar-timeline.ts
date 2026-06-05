@@ -116,7 +116,7 @@ export async function generateAvatarFromSequence(audioClipId: string): Promise<v
   const segments = await getAudioSegments(audioContext.clip, project);
   const metadata: AvatarGeneratedClipMetadata = {
     kind: "avatar-generated",
-    source: "video",
+    source: "sequence",
     audioClipId,
     characterId: AVATAR_CHARACTER_ID,
   };
@@ -337,7 +337,14 @@ function createVideoClipsForSegments(params: {
           startTime: cursor,
           duration,
           transform: asset.transform,
-          metadata: params.metadata,
+          metadata: {
+            ...params.metadata,
+            actionName: asset.name,
+            actionKind: asset.kind,
+            ...(params.metadata.source === "sequence" && asset.id.startsWith("sequence-video-")
+              ? { sequenceActionId: asset.id.slice("sequence-video-".length) }
+              : {}),
+          },
         }),
       );
       cursor += duration;

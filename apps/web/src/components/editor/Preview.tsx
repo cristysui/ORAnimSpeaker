@@ -74,6 +74,8 @@ import {
 } from "./preview/index";
 import { ProcessingOverlay } from "./ProcessingOverlay";
 import { AvatarConfigStageOverlay } from "../../features/avatar/AvatarConfigStageOverlay";
+import { getAvatarConfig } from "../../features/avatar/avatar-project";
+import type { AvatarSequenceAction } from "../../features/avatar/avatar-types";
 import {
   getPersonSegmentationEngine,
   getBackgroundRemovalEngine,
@@ -94,6 +96,52 @@ interface PreparedPreviewFrame {
 
 type PreviewClip = Track["clips"][number];
 
+const MIN_SEQUENCE_FRAME_DURATION_SEC = 0.001;
+const AVATAR_PREVIEW_DEBUG_LIMIT = 120;
+
+type AvatarPreviewDebugEntry = {
+  label: string;
+  timestamp: number;
+  payload: unknown;
+};
+
+const avatarPreviewDebugLogs: AvatarPreviewDebugEntry[] = [];
+
+const recordAvatarPreviewDebug = (label: string, payload: unknown): void => {
+  avatarPreviewDebugLogs.push({
+    label,
+    timestamp: Date.now(),
+    payload,
+  });
+  if (avatarPreviewDebugLogs.length > AVATAR_PREVIEW_DEBUG_LIMIT) {
+    avatarPreviewDebugLogs.splice(
+      0,
+      avatarPreviewDebugLogs.length - AVATAR_PREVIEW_DEBUG_LIMIT,
+    );
+  }
+  if (typeof document !== "undefined") {
+    try {
+      document.documentElement.setAttribute(
+        "data-avatar-preview-debug-logs",
+        JSON.stringify(avatarPreviewDebugLogs.slice(-30)),
+      );
+    } catch {}
+  }
+  console.info(`[AvatarPreviewDebug] ${label}`, payload);
+};
+
+const resetPreviewCanvasContext = (
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+): void => {
+  if (typeof ctx.resetTransform === "function") {
+    ctx.resetTransform();
+  } else {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
+};
+
 const isAvatarActionOverlayClip = (clip: PreviewClip): boolean => {
   return clip.metadata?.kind === "avatar-action-overlay";
 };
@@ -109,6 +157,21 @@ const isAvatarGeneratedSequenceClip = (clip: PreviewClip): boolean => {
   );
 };
 
+const isAvatarPreviewCanvasOnlyClip = (clip: PreviewClip): boolean => {
+  return isAvatarGeneratedClip(clip) || isAvatarActionOverlayClip(clip);
+};
+
+const isAvatarSequencePreviewClip = (clip: PreviewClip): boolean => {
+  return (
+    clip.metadata?.source === "sequence" &&
+    (isAvatarGeneratedClip(clip) || isAvatarActionOverlayClip(clip))
+  );
+};
+
+const isAvatarSequenceGeneratedMediaName = (name?: string | null): boolean => {
+  return /-sequence-action\.webm$/i.test(name ?? "");
+};
+
 const clipIsActiveAtTime = (clip: PreviewClip, time: number): boolean => {
   return time >= clip.startTime && time < clip.startTime + clip.duration;
 };
@@ -120,11 +183,79 @@ const hasAvatarActionOverlayAtTime = (tracks: Track[], time: number): boolean =>
   });
 };
 
+const hasAvatarGeneratedAtTime = (tracks: Track[], time: number): boolean => {
+  return tracks.some((track) => {
+    if (track.hidden || (track.type !== "video" && track.type !== "image")) return false;
+    return track.clips.some((clip) => isAvatarGeneratedClip(clip) && clipIsActiveAtTime(clip, time));
+  });
+};
+
+const getAvatarOverlayParentIdsAtTime = (tracks: Track[], time: number): Set<string> => {
+  const parentIds = new Set<string>();
+  for (const track of tracks) {
+    if (track.hidden || (track.type !== "video" && track.type !== "image")) continue;
+    for (const clip of track.clips) {
+      if (!isAvatarActionOverlayClip(clip) || !clipIsActiveAtTime(clip, time)) continue;
+      const parentId = clip.metadata?.parentGeneratedClipId;
+      if (typeof parentId === "string") {
+        parentIds.add(parentId);
+      }
+    }
+  }
+  return parentIds;
+};
+
+const getTopAvatarGeneratedClipIdsAtTime = (tracks: Track[], time: number): Set<string> => {
+  let topTrackIndex = Infinity;
+  const clipIds = new Set<string>();
+
+  tracks.forEach((track, trackIndex) => {
+    if (track.hidden || (track.type !== "video" && track.type !== "image")) return;
+    for (const clip of track.clips) {
+      if (!isAvatarGeneratedClip(clip) || !clipIsActiveAtTime(clip, time)) continue;
+      if (trackIndex < topTrackIndex) {
+        topTrackIndex = trackIndex;
+        clipIds.clear();
+      }
+      if (trackIndex === topTrackIndex) {
+        clipIds.add(clip.id);
+      }
+    }
+  });
+
+  return clipIds;
+};
+
 const shouldSuppressClipForAvatarOverlay = (
   clip: PreviewClip,
-  hasActiveAvatarOverlay: boolean,
+  overlayParentIds: Set<string>,
 ): boolean => {
-  return hasActiveAvatarOverlay && isAvatarGeneratedClip(clip);
+  return isAvatarGeneratedClip(clip) && overlayParentIds.has(clip.id);
+};
+
+const shouldSuppressNonTopAvatarGeneratedClip = (
+  clip: PreviewClip,
+  topAvatarGeneratedClipIds: Set<string>,
+): boolean => {
+  return (
+    isAvatarGeneratedClip(clip) &&
+    topAvatarGeneratedClipIds.size > 0 &&
+    !topAvatarGeneratedClipIds.has(clip.id)
+  );
+};
+
+const getAvatarOverlayParentIds = (
+  frames: Array<{ clip: PreviewClip }>,
+): Set<string> => {
+  const parentIds = new Set<string>();
+  for (const { clip } of frames) {
+    if (!isAvatarActionOverlayClip(clip)) continue;
+    const parentId = clip.metadata?.parentGeneratedClipId;
+    if (typeof parentId === "string") {
+      parentIds.add(parentId);
+    }
+  }
+  return parentIds;
 };
 
 const withPlaybackTimeout = <T,>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
@@ -230,36 +361,6 @@ const applyStabilizationTransform = (
       sourceHeight: frameHeight,
     },
   ) as ClipTransform;
-};
-
-const isLikelyBlankPreviewFrame = (
-  frame: HTMLCanvasElement | OffscreenCanvas,
-): boolean => {
-  const sampleSize = 16;
-  const sampleCanvas = new OffscreenCanvas(sampleSize, sampleSize);
-  const sampleCtx = sampleCanvas.getContext("2d", { willReadFrequently: true });
-  if (!sampleCtx) return false;
-
-  sampleCtx.drawImage(frame, 0, 0, sampleSize, sampleSize);
-  const { data } = sampleCtx.getImageData(0, 0, sampleSize, sampleSize);
-  let visiblePixels = 0;
-  let contentPixels = 0;
-
-  for (let index = 0; index < data.length; index += 4) {
-    const alpha = data[index + 3] ?? 0;
-    if (alpha <= 8) continue;
-    visiblePixels += 1;
-
-    const red = data[index] ?? 0;
-    const green = data[index + 1] ?? 0;
-    const blue = data[index + 2] ?? 0;
-    if (red + green + blue > 30) {
-      contentPixels += 1;
-    }
-  }
-
-  if (visiblePixels === 0) return true;
-  return contentPixels / visiblePixels < 0.02;
 };
 
 const renderFrameWithGPU = async (
@@ -1131,6 +1232,7 @@ export const Preview: React.FC = () => {
   >(new Map());
 
   const imageBitmapCacheRef = useRef<Map<string, ImageBitmap>>(new Map());
+  const lastAvatarPreviewDebugLogRef = useRef<number>(0);
 
   useEffect(() => {
     rateRef.current = playbackRate;
@@ -1154,6 +1256,102 @@ export const Preview: React.FC = () => {
     }
     imageBitmapCacheRef.current = new Map();
   }, []);
+
+  const getSequencePreviewFrame = useCallback(
+    async (
+      clip: PreviewClip,
+      sourceTime: number,
+    ): Promise<{
+      frame: ImageBitmap;
+      transform: ClipTransform;
+      cleanup: () => void;
+    } | null> => {
+      if (!isAvatarGeneratedClip(clip) && !isAvatarActionOverlayClip(clip)) return null;
+      const mediaItem = getMediaItem(clip.mediaId);
+      const isSequenceMediaName = isAvatarSequenceGeneratedMediaName(mediaItem?.name);
+      if (!isAvatarSequencePreviewClip(clip) && !isSequenceMediaName) return null;
+
+      const config = getAvatarConfig(project);
+      const actions: AvatarSequenceAction[] = [
+        ...config.sequenceConfig.idle,
+        ...config.sequenceConfig.speaking,
+        ...config.sequenceConfig.actions,
+      ];
+      const metadata = clip.metadata ?? {};
+      const sequenceActionId =
+        typeof metadata.sequenceActionId === "string"
+          ? metadata.sequenceActionId
+          : typeof metadata.actionId === "string"
+            ? metadata.actionId
+            : null;
+      const actionName =
+        typeof metadata.actionName === "string"
+          ? metadata.actionName
+          : mediaItem?.name.replace(/-sequence-action\.webm$/i, "").replace(/\.webm$/i, "");
+      const action =
+        actions.find((item) => item.id === sequenceActionId) ??
+        actions.find((item) => item.name === actionName);
+
+      if (!action || action.frames.length === 0) {
+        recordAvatarPreviewDebug("sequence lookup failed", {
+          clipId: clip.id,
+          mediaId: clip.mediaId,
+          mediaName: mediaItem?.name,
+          sourceTime,
+          metadata,
+          sequenceActionId,
+          actionName,
+          actionNames: actions.map((item) => item.name),
+        });
+        return null;
+      }
+
+      const frameDurations = action.frames.map((frame) =>
+        Math.max(MIN_SEQUENCE_FRAME_DURATION_SEC, frame.durationSec ?? action.frameDurationSec),
+      );
+      const totalDuration = frameDurations.reduce((sum, duration) => sum + duration, 0);
+      if (totalDuration <= 0) return null;
+
+      const wrappedTime = ((sourceTime % totalDuration) + totalDuration) % totalDuration;
+      let cursor = 0;
+      let selectedFrame = action.frames[0];
+      for (let index = 0; index < action.frames.length; index += 1) {
+        const duration = frameDurations[index] ?? action.frameDurationSec;
+        if (wrappedTime < cursor + duration) {
+          selectedFrame = action.frames[index];
+          break;
+        }
+        cursor += duration;
+      }
+
+      const frameMedia = getMediaItem(selectedFrame.mediaId);
+      if (!frameMedia?.blob) return null;
+
+      const cacheKey = `avatar-sequence-frame:${selectedFrame.mediaId}`;
+      let bitmap = imageBitmapCacheRef.current.get(cacheKey);
+      if (!bitmap) {
+        bitmap = await createImageBitmap(frameMedia.blob);
+        imageBitmapCacheRef.current.set(cacheKey, bitmap);
+      }
+
+      const transform = {
+        ...DEFAULT_TRANSFORM,
+        ...(action.transform as ClipTransform),
+        position: action.transform.position ?? DEFAULT_TRANSFORM.position,
+        scale: action.transform.scale ?? DEFAULT_TRANSFORM.scale,
+        anchor: action.transform.anchor ?? DEFAULT_TRANSFORM.anchor,
+        opacity: action.transform.opacity ?? DEFAULT_TRANSFORM.opacity,
+        fitMode: "none" as const,
+      };
+
+      return {
+        frame: bitmap,
+        transform,
+        cleanup: () => {},
+      };
+    },
+    [getMediaItem, project],
+  );
 
   const cleanupAudioResources = useCallback(() => {
     if (audioSourceRef.current) {
@@ -1815,6 +2013,8 @@ export const Preview: React.FC = () => {
       const ctx =
         offscreenCtxRef.current as unknown as CanvasRenderingContext2D;
       if (!ctx) return false;
+      resetPreviewCanvasContext(ctx);
+      resetPreviewCanvasContext(mainCtx);
 
       const videoTracks = timelineTracks.filter(
         (t) => (t.type === "video" || t.type === "image") && !t.hidden,
@@ -1826,8 +2026,11 @@ export const Preview: React.FC = () => {
       const activeShapeClips = getActiveShapeClips(allShapeClips, time);
       const activeTextClips = getActiveTextClips(allTextClips, time);
       const hasActiveAvatarOverlay = hasAvatarActionOverlayAtTime(timelineTracks, time);
+      const overlayParentIds = getAvatarOverlayParentIdsAtTime(timelineTracks, time);
+      const topAvatarGeneratedClipIds = getTopAvatarGeneratedClipIdsAtTime(timelineTracks, time);
+      const hasActiveAvatarGenerated = topAvatarGeneratedClipIds.size > 0;
 
-      const transitionInfo = hasActiveAvatarOverlay
+      const transitionInfo = hasActiveAvatarOverlay || hasActiveAvatarGenerated
         ? null
         : getTransitionAtTime(time, timelineTracks);
 
@@ -2005,9 +2208,41 @@ export const Preview: React.FC = () => {
             (clip) =>
               time >= clip.startTime &&
               time < clip.startTime + clip.duration &&
-              !shouldSuppressClipForAvatarOverlay(clip, hasActiveAvatarOverlay),
+              !shouldSuppressClipForAvatarOverlay(clip, overlayParentIds) &&
+              !shouldSuppressNonTopAvatarGeneratedClip(clip, topAvatarGeneratedClipIds),
           ),
         );
+
+        if (hasActiveAvatarGenerated) {
+          const avatarClips = videoTracks.flatMap((track, trackIndex) =>
+            track.clips
+              .filter(
+                (clip) =>
+                  time >= clip.startTime &&
+                  time < clip.startTime + clip.duration &&
+                  isAvatarGeneratedClip(clip),
+              )
+              .map((clip) => {
+                const mediaItem = getMediaItem(clip.mediaId);
+                return {
+                  clipId: clip.id,
+                  trackIndex,
+                  mediaName: mediaItem?.name,
+                  source: clip.metadata?.source,
+                  transform: clip.transform,
+                  suppressed: shouldSuppressNonTopAvatarGeneratedClip(
+                    clip,
+                    topAvatarGeneratedClipIds,
+                  ),
+                };
+              }),
+          );
+          recordAvatarPreviewDebug("static avatar candidates", {
+            time,
+            topAvatarGeneratedClipIds: Array.from(topAvatarGeneratedClipIds),
+            avatarClips,
+          });
+        }
 
         if (
           shouldClearCanvas &&
@@ -2047,11 +2282,56 @@ export const Preview: React.FC = () => {
               const clipStart = clip.startTime;
               const clipEnd = clip.startTime + clip.duration;
 
-              if (
+                if (
                 time >= clipStart &&
                 time < clipEnd &&
-                !shouldSuppressClipForAvatarOverlay(clip, hasActiveAvatarOverlay)
+                !shouldSuppressClipForAvatarOverlay(clip, overlayParentIds) &&
+                !shouldSuppressNonTopAvatarGeneratedClip(clip, topAvatarGeneratedClipIds)
               ) {
+                const clipLocalTime = time - clip.startTime;
+                const speedEngine = getSpeedEngine();
+                const adjustedLocalTime = speedEngine.getSourceTimeAtPlaybackTime(
+                  clip.id,
+                  clipLocalTime,
+                );
+                const sourceTime = Math.max(
+                  clip.inPoint,
+                  Math.min(clip.outPoint, clip.inPoint + adjustedLocalTime),
+                );
+                const sequenceFrame = await getSequencePreviewFrame(clip, sourceTime);
+
+                if (sequenceFrame) {
+                  recordAvatarPreviewDebug("static sequence frame", {
+                    time,
+                    clipId: clip.id,
+                    mediaName: getMediaItem(clip.mediaId)?.name,
+                    sourceTime,
+                    frameSize: {
+                      width: sequenceFrame.frame.width,
+                      height: sequenceFrame.frame.height,
+                    },
+                    transform: sequenceFrame.transform,
+                  });
+                  drawFrameWithTransform(
+                    ctx,
+                    sequenceFrame.frame,
+                    sequenceFrame.transform,
+                    canvas.width,
+                    canvas.height,
+                  );
+                  hasRenderedFrame = true;
+                  sequenceFrame.cleanup();
+                  if (shouldCompositeSubject) {
+                    subjectFrame?.close();
+                    subjectFrame = await captureSubjectFrame(
+                      ctx,
+                      canvas.width,
+                      canvas.height,
+                    );
+                  }
+                  continue;
+                }
+
                 const frame = await decodeClipFrame(
                   clip,
                   time,
@@ -2060,16 +2340,6 @@ export const Preview: React.FC = () => {
                 );
 
                 if (frame) {
-                  const clipLocalTime = time - clip.startTime;
-                  const speedEngine = getSpeedEngine();
-                  const adjustedLocalTime = speedEngine.getSourceTimeAtPlaybackTime(
-                    clip.id,
-                    clipLocalTime,
-                  );
-                  const sourceTime = Math.max(
-                    clip.inPoint,
-                    Math.min(clip.outPoint, clip.inPoint + adjustedLocalTime),
-                  );
                   let animatedTransform = getAnimatedTransform(
                     clip.transform as ClipTransform,
                     clip.keyframes,
@@ -2219,6 +2489,7 @@ export const Preview: React.FC = () => {
       }
 
       if (hasRenderedFrame && offscreenCanvasRef.current) {
+        resetPreviewCanvasContext(mainCtx);
         mainCtx.clearRect(0, 0, canvas.width, canvas.height);
         mainCtx.drawImage(offscreenCanvasRef.current, 0, 0);
       }
@@ -2519,6 +2790,21 @@ export const Preview: React.FC = () => {
       }
 
       if (allVideoClips.length === 0) return { canUse: false, clips: [] };
+
+      if (allVideoClips.some(({ clip }) => isAvatarPreviewCanvasOnlyClip(clip))) {
+        return { canUse: false, clips: [] };
+      }
+
+      const videoTrackIdsWithUpcomingClips = new Set<string>();
+      for (const track of videoTracks) {
+        if (track.clips.some((clip) => clip.startTime + clip.duration > startPosition)) {
+          videoTrackIdsWithUpcomingClips.add(track.id);
+        }
+      }
+
+      if (videoTrackIdsWithUpcomingClips.size > 1) {
+        return { canUse: false, clips: [] };
+      }
 
       allVideoClips.sort((a, b) => a.clip.startTime - b.clip.startTime);
 
@@ -3409,7 +3695,9 @@ export const Preview: React.FC = () => {
               }
 
               const useGPU =
-                rendererRef.current && rendererRef.current.type === "webgpu";
+                rendererRef.current &&
+                rendererRef.current.type === "webgpu" &&
+                !isAvatarPreviewCanvasOnlyClip(clip);
               const preparedFrame = await preparePreviewFrame(
                 clip.id,
                 frameCanvas,
@@ -3625,7 +3913,11 @@ export const Preview: React.FC = () => {
       }
 
       for (const { clip, trackIndex } of initialClips) {
-        if (!playbackResourcesRef.current.has(clip.id)) {
+        const mediaItem = getMediaItem(clip.mediaId);
+        const shouldUseSequencePreview =
+          isAvatarSequencePreviewClip(clip) ||
+          isAvatarSequenceGeneratedMediaName(mediaItem?.name);
+        if (!shouldUseSequencePreview && !playbackResourcesRef.current.has(clip.id)) {
           const resources = await initClipResources(clip, trackIndex);
           if (resources) {
             playbackResourcesRef.current.set(clip.id, resources);
@@ -3702,6 +3994,8 @@ export const Preview: React.FC = () => {
         pause();
         return;
       }
+      resetPreviewCanvasContext(ctx);
+      resetPreviewCanvasContext(mainCtx);
 
       const masterClock = getMasterClock();
       masterClock.setDuration(actualEndTime);
@@ -3829,7 +4123,11 @@ export const Preview: React.FC = () => {
           }
 
           for (const { clip, trackIndex } of activeClips) {
-            if (!playbackResourcesRef.current.has(clip.id)) {
+            const mediaItem = getMediaItem(clip.mediaId);
+            const shouldUseSequencePreview =
+              isAvatarSequencePreviewClip(clip) ||
+              isAvatarSequenceGeneratedMediaName(mediaItem?.name);
+            if (!shouldUseSequencePreview && !playbackResourcesRef.current.has(clip.id)) {
               const resources = await initClipResources(clip, trackIndex);
               if (resources) {
                 playbackResourcesRef.current.set(clip.id, resources);
@@ -3841,10 +4139,15 @@ export const Preview: React.FC = () => {
           // (one will be outside its visible window — its sink will clamp to
           // the nearest edge frame) and blend them. Overlays still render on
           // top below.
-          const transitionInfoMulti = getTransitionAtTime(
-            currentPlayhead,
-            timelineTracksRef.current,
-          );
+          const hasAvatarTransitionSensitiveClip =
+            hasAvatarActionOverlayAtTime(timelineTracksRef.current, currentPlayhead) ||
+            hasAvatarGeneratedAtTime(timelineTracksRef.current, currentPlayhead);
+          const transitionInfoMulti = hasAvatarTransitionSensitiveClip
+            ? null
+            : getTransitionAtTime(
+                currentPlayhead,
+                timelineTracksRef.current,
+              );
 
           // Compute these here so they're visible in both the transition path
           // and the normal compositing path below.
@@ -3934,6 +4237,7 @@ export const Preview: React.FC = () => {
                     incoming,
                   );
 
+                  resetPreviewCanvasContext(ctx);
                   ctx.clearRect(0, 0, canvas.width, canvas.height);
                   ctx.drawImage(blended, 0, 0, canvas.width, canvas.height);
 
@@ -3969,6 +4273,8 @@ export const Preview: React.FC = () => {
                     );
                   }
 
+                  resetPreviewCanvasContext(mainCtx);
+                  mainCtx.clearRect(0, 0, canvas.width, canvas.height);
                   mainCtx.drawImage(offscreenCanvasRef.current!, 0, 0);
                   blended.close();
                   outgoing.close();
@@ -4031,14 +4337,46 @@ export const Preview: React.FC = () => {
           const sortedClips = [...activeClips].sort(
             (a, b) => b.trackIndex - a.trackIndex,
           );
+          const nowForAvatarDebug = performance.now();
+          if (nowForAvatarDebug - lastAvatarPreviewDebugLogRef.current > 1000) {
+            const avatarClips = sortedClips
+              .filter(({ clip }) => isAvatarGeneratedClip(clip) || isAvatarActionOverlayClip(clip))
+              .map(({ clip, trackIndex }) => {
+                const mediaItem = getMediaItem(clip.mediaId);
+                return {
+                  clipId: clip.id,
+                  trackIndex,
+                  mediaName: mediaItem?.name,
+                  metadata: clip.metadata,
+                  startTime: clip.startTime,
+                  duration: clip.duration,
+                  transform: clip.transform,
+                  isSequencePreview:
+                    isAvatarSequencePreviewClip(clip) ||
+                    isAvatarSequenceGeneratedMediaName(mediaItem?.name),
+                };
+              });
+            if (avatarClips.length > 0) {
+              lastAvatarPreviewDebugLogRef.current = nowForAvatarDebug;
+              recordAvatarPreviewDebug("active avatar clips", {
+                currentPlayhead,
+                resources: Array.from(playbackResourcesRef.current.keys()),
+                avatarClips,
+              });
+            }
+          }
           const activeTextNeedsSubject = hasBehindSubjectText(activeTextClips);
           const hasNaturalSizeClip = sortedClips.some(({ clip }) => {
             return (clip.transform as ClipTransform | undefined)?.fitMode === "none";
           });
+          const hasAvatarCanvasOnlyClip = sortedClips.some(({ clip }) =>
+            isAvatarPreviewCanvasOnlyClip(clip),
+          );
           const useGPUFrames =
             rendererRef.current?.type === "webgpu" &&
             !activeTextNeedsSubject &&
-            !hasNaturalSizeClip;
+            !hasNaturalSizeClip &&
+            !hasAvatarCanvasOnlyClip;
 
           const imageClipFrames: Array<{
             clip: (typeof sortedClips)[0]["clip"];
@@ -4108,9 +4446,6 @@ export const Preview: React.FC = () => {
 
             videoClipPromises.push(
               (async () => {
-                const resources = playbackResourcesRef.current.get(clip.id);
-                if (!resources) return null;
-
                 const speedEngine = getSpeedEngine();
                 const adjustedLocalTime =
                   speedEngine.getSourceTimeAtPlaybackTime(
@@ -4121,6 +4456,19 @@ export const Preview: React.FC = () => {
                   clip.inPoint,
                   Math.min(clip.outPoint, (clip.inPoint || 0) + adjustedLocalTime),
                 );
+
+                const sequenceFrame = await getSequencePreviewFrame(clip, sourceTime);
+                if (sequenceFrame) {
+                  return {
+                    clip,
+                    transform: sequenceFrame.transform,
+                    frame: sequenceFrame.frame,
+                    cleanup: sequenceFrame.cleanup,
+                  };
+                }
+
+                const resources = playbackResourcesRef.current.get(clip.id);
+                if (!resources) return null;
 
                 try {
                   const frameResult = await (
@@ -4136,13 +4484,6 @@ export const Preview: React.FC = () => {
                   if (!isActive) return null;
 
                   if (frameResult?.canvas) {
-                    if (
-                      (isAvatarGeneratedClip(clip) || isAvatarActionOverlayClip(clip)) &&
-                      isLikelyBlankPreviewFrame(frameResult.canvas)
-                    ) {
-                      return null;
-                    }
-
                     const preparedFrame = await preparePreviewFrame(
                       clip.id,
                       frameResult.canvas,
@@ -4188,18 +4529,59 @@ export const Preview: React.FC = () => {
           );
 
           const decodedFrames = [...imageClipFrames, ...validVideoFrames];
-          const hasRenderableAvatarOverlay = decodedFrames.some(({ clip }) =>
-            isAvatarActionOverlayClip(clip),
+          const overlayParentIds = getAvatarOverlayParentIds(decodedFrames);
+          const topAvatarGeneratedClipIds = getTopAvatarGeneratedClipIdsAtTime(
+            timelineTracksRef.current,
+            currentPlayhead,
           );
-          const validFrames = hasRenderableAvatarOverlay
-            ? decodedFrames.filter(({ clip }) => !isAvatarGeneratedClip(clip))
+          const validFrames = (overlayParentIds.size > 0 || topAvatarGeneratedClipIds.size > 0)
+            ? decodedFrames.filter(
+                ({ clip }) =>
+                  !(
+                    shouldSuppressClipForAvatarOverlay(clip, overlayParentIds) ||
+                    shouldSuppressNonTopAvatarGeneratedClip(clip, topAvatarGeneratedClipIds)
+                  ),
+              )
             : decodedFrames;
+
+          if (performance.now() - lastAvatarPreviewDebugLogRef.current < 80) {
+            recordAvatarPreviewDebug("valid avatar frames", {
+              currentPlayhead,
+              overlayParentIds: Array.from(overlayParentIds),
+              topAvatarGeneratedClipIds: Array.from(topAvatarGeneratedClipIds),
+              decodedFrames: decodedFrames
+                .filter(({ clip }) => isAvatarGeneratedClip(clip) || isAvatarActionOverlayClip(clip))
+                .map(({ clip, frame, transform }) => ({
+                  clipId: clip.id,
+                  mediaName: getMediaItem(clip.mediaId)?.name,
+                  source: clip.metadata?.source,
+                  frameSize: {
+                    width: "width" in frame ? frame.width : null,
+                    height: "height" in frame ? frame.height : null,
+                  },
+                  transform,
+                })),
+              validFrames: validFrames
+                .filter(({ clip }) => isAvatarGeneratedClip(clip) || isAvatarActionOverlayClip(clip))
+                .map(({ clip, frame, transform }) => ({
+                  clipId: clip.id,
+                  mediaName: getMediaItem(clip.mediaId)?.name,
+                  source: clip.metadata?.source,
+                  frameSize: {
+                    width: "width" in frame ? frame.width : null,
+                    height: "height" in frame ? frame.height : null,
+                  },
+                  transform,
+                })),
+            });
+          }
 
           if (
             validFrames.length > 0 ||
             currentTextClips.length > 0 ||
             currentShapeClips.length > 0
           ) {
+            resetPreviewCanvasContext(ctx);
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             const tracks = timelineTracksRef.current;
@@ -4224,7 +4606,8 @@ export const Preview: React.FC = () => {
               rendererRef.current &&
               rendererRef.current.type === "webgpu" &&
               !activeTextNeedsSubject &&
-              !validFrames.some((frame) => frame.transform.fitMode === "none");
+              !validFrames.some((frame) => frame.transform.fitMode === "none") &&
+              !validFrames.some(({ clip }) => isAvatarPreviewCanvasOnlyClip(clip));
 
             if (useGPU) {
               const gpuLayers: GPULayer[] = [];
@@ -4404,6 +4787,7 @@ export const Preview: React.FC = () => {
               );
             }
 
+            resetPreviewCanvasContext(mainCtx);
             mainCtx.clearRect(0, 0, canvas.width, canvas.height);
             mainCtx.drawImage(offscreenCanvasRef.current!, 0, 0);
 
@@ -4415,6 +4799,7 @@ export const Preview: React.FC = () => {
               );
             } catch {}
           } else if (lastGoodFrameRef.current) {
+            resetPreviewCanvasContext(ctx);
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(
               lastGoodFrameRef.current,
@@ -4438,6 +4823,7 @@ export const Preview: React.FC = () => {
               );
             }
 
+            resetPreviewCanvasContext(mainCtx);
             mainCtx.clearRect(0, 0, canvas.width, canvas.height);
             mainCtx.drawImage(offscreenCanvasRef.current!, 0, 0);
           }
