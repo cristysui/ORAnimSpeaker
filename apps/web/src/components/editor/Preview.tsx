@@ -142,6 +142,100 @@ const resetPreviewCanvasContext = (
   ctx.globalCompositeOperation = "source-over";
 };
 
+const normalizeSequenceFrameAlpha = async (
+  bitmap: ImageBitmap,
+): Promise<ImageBitmap> => {
+  const width = bitmap.width;
+  const height = bitmap.height;
+  if (width <= 0 || height <= 0) return bitmap;
+
+  const canvas = new OffscreenCanvas(width, height);
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return bitmap;
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.drawImage(bitmap, 0, 0);
+
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  const cornerIndexes = [
+    0,
+    width - 1,
+    (height - 1) * width,
+    height * width - 1,
+  ];
+  const corners = cornerIndexes.map((pixelIndex) => {
+    const offset = pixelIndex * 4;
+    return {
+      r: data[offset] ?? 0,
+      g: data[offset + 1] ?? 0,
+      b: data[offset + 2] ?? 0,
+      a: data[offset + 3] ?? 0,
+    };
+  });
+
+  if (corners.some((color) => color.a < 245)) {
+    return bitmap;
+  }
+
+  const average = corners.reduce(
+    (sum, color) => ({
+      r: sum.r + color.r / corners.length,
+      g: sum.g + color.g / corners.length,
+      b: sum.b + color.b / corners.length,
+    }),
+    { r: 0, g: 0, b: 0 },
+  );
+  const isLightBackground = average.r > 220 && average.g > 220 && average.b > 220;
+  const cornersMatch = corners.every((color) => {
+    const distance =
+      Math.abs(color.r - average.r) +
+      Math.abs(color.g - average.g) +
+      Math.abs(color.b - average.b);
+    return distance < 42;
+  });
+  if (!isLightBackground || !cornersMatch) {
+    return bitmap;
+  }
+
+  const visited = new Uint8Array(width * height);
+  const queue: number[] = [...cornerIndexes];
+  let changed = false;
+  const tolerance = 54;
+
+  const matchesBackground = (pixelIndex: number): boolean => {
+    const offset = pixelIndex * 4;
+    const alpha = data[offset + 3] ?? 0;
+    if (alpha < 16) return false;
+    const distance =
+      Math.abs((data[offset] ?? 0) - average.r) +
+      Math.abs((data[offset + 1] ?? 0) - average.g) +
+      Math.abs((data[offset + 2] ?? 0) - average.b);
+    return distance <= tolerance;
+  };
+
+  while (queue.length > 0) {
+    const pixelIndex = queue.pop()!;
+    if (pixelIndex < 0 || pixelIndex >= visited.length || visited[pixelIndex]) continue;
+    visited[pixelIndex] = 1;
+    if (!matchesBackground(pixelIndex)) continue;
+
+    data[pixelIndex * 4 + 3] = 0;
+    changed = true;
+
+    const x = pixelIndex % width;
+    const y = Math.floor(pixelIndex / width);
+    if (x > 0) queue.push(pixelIndex - 1);
+    if (x < width - 1) queue.push(pixelIndex + 1);
+    if (y > 0) queue.push(pixelIndex - width);
+    if (y < height - 1) queue.push(pixelIndex + width);
+  }
+
+  if (!changed) return bitmap;
+  ctx.putImageData(imageData, 0, 0);
+  return await createImageBitmap(canvas);
+};
+
 const isAvatarActionOverlayClip = (clip: PreviewClip): boolean => {
   return clip.metadata?.kind === "avatar-action-overlay";
 };
@@ -550,6 +644,7 @@ export const Preview: React.FC = () => {
   const videoAreaRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const animationRef = useRef<number | null>(null);
+  const previewRenderEpochRef = useRef<number>(0);
   const renderBridgeInitialized = useRef<boolean>(false);
   const lastGoodFrameRef = useRef<ImageBitmap | null>(null);
   const offscreenCanvasRef = useRef<OffscreenCanvas | null>(null);
@@ -1330,7 +1425,11 @@ export const Preview: React.FC = () => {
       const cacheKey = `avatar-sequence-frame:${selectedFrame.mediaId}`;
       let bitmap = imageBitmapCacheRef.current.get(cacheKey);
       if (!bitmap) {
-        bitmap = await createImageBitmap(frameMedia.blob);
+        const decodedBitmap = await createImageBitmap(frameMedia.blob);
+        bitmap = await normalizeSequenceFrameAlpha(decodedBitmap);
+        if (bitmap !== decodedBitmap) {
+          decodedBitmap.close();
+        }
         imageBitmapCacheRef.current.set(cacheKey, bitmap);
       }
 
@@ -1987,6 +2086,8 @@ export const Preview: React.FC = () => {
     async (time: number): Promise<boolean> => {
       const canvas = canvasRef.current;
       if (!canvas) return false;
+      const renderEpoch = ++previewRenderEpochRef.current;
+      const isCurrentRender = () => previewRenderEpochRef.current === renderEpoch;
 
       if (canvas.width === 0 || canvas.height === 0) {
         canvas.width = settings.width;
@@ -2489,6 +2590,7 @@ export const Preview: React.FC = () => {
       }
 
       if (hasRenderedFrame && offscreenCanvasRef.current) {
+        if (!isCurrentRender()) return false;
         resetPreviewCanvasContext(mainCtx);
         mainCtx.clearRect(0, 0, canvas.width, canvas.height);
         mainCtx.drawImage(offscreenCanvasRef.current, 0, 0);
@@ -3804,7 +3906,10 @@ export const Preview: React.FC = () => {
       trackIndex: number,
     ) => {
       const mediaItem = getMediaItem(clip.mediaId);
-      if (!mediaItem?.blob) {
+      if (isAvatarSequencePreviewClip(clip) || isAvatarSequenceGeneratedMediaName(mediaItem?.name)) {
+        return null;
+      }
+      if (!mediaItem?.blob || !(mediaItem.blob instanceof Blob)) {
         return null;
       }
 
@@ -3861,7 +3966,9 @@ export const Preview: React.FC = () => {
       if (cachedBitmap) return cachedBitmap;
 
       const mediaItem = getMediaItem(clip.mediaId);
-      if (mediaItem?.type !== "image" || !mediaItem.blob) return null;
+      if (mediaItem?.type !== "image" || !mediaItem.blob || !(mediaItem.blob instanceof Blob)) {
+        return null;
+      }
 
       try {
         const bitmap = await withPlaybackTimeout(
@@ -3996,6 +4103,9 @@ export const Preview: React.FC = () => {
       }
       resetPreviewCanvasContext(ctx);
       resetPreviewCanvasContext(mainCtx);
+      const playbackEpoch = ++previewRenderEpochRef.current;
+      const isCurrentPlaybackRender = () =>
+        isActive && previewRenderEpochRef.current === playbackEpoch;
 
       const masterClock = getMasterClock();
       masterClock.setDuration(actualEndTime);
@@ -4273,6 +4383,13 @@ export const Preview: React.FC = () => {
                     );
                   }
 
+                  if (!isCurrentPlaybackRender()) {
+                    blended.close();
+                    outgoing.close();
+                    incoming.close();
+                    isProcessingFrame = false;
+                    return;
+                  }
                   resetPreviewCanvasContext(mainCtx);
                   mainCtx.clearRect(0, 0, canvas.width, canvas.height);
                   mainCtx.drawImage(offscreenCanvasRef.current!, 0, 0);
@@ -4787,6 +4904,10 @@ export const Preview: React.FC = () => {
               );
             }
 
+            if (!isCurrentPlaybackRender()) {
+              isProcessingFrame = false;
+              return;
+            }
             resetPreviewCanvasContext(mainCtx);
             mainCtx.clearRect(0, 0, canvas.width, canvas.height);
             mainCtx.drawImage(offscreenCanvasRef.current!, 0, 0);
@@ -4823,6 +4944,10 @@ export const Preview: React.FC = () => {
               );
             }
 
+            if (!isCurrentPlaybackRender()) {
+              isProcessingFrame = false;
+              return;
+            }
             resetPreviewCanvasContext(mainCtx);
             mainCtx.clearRect(0, 0, canvas.width, canvas.height);
             mainCtx.drawImage(offscreenCanvasRef.current!, 0, 0);
@@ -4967,6 +5092,8 @@ export const Preview: React.FC = () => {
 
     return () => {
       isActive = false;
+      previewRenderEpochRef.current += 1;
+      skipNextPausedRenderRef.current = true;
       nativePlaybackActiveRef.current = false;
       const masterClock = getMasterClock();
       if (masterClock.isPlaying || masterClock.isPaused) {
@@ -5016,6 +5143,7 @@ export const Preview: React.FC = () => {
   const modifiedRenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const renderInFlightRef = useRef<boolean>(false);
   const pendingRenderTimeRef = useRef<number | null>(null);
+  const skipNextPausedRenderRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (isPlaying) return;
@@ -5042,6 +5170,11 @@ export const Preview: React.FC = () => {
       releaseScrubVideoElements();
     }
     lastPreviewRenderTimeRef.current = playheadPosition;
+
+    if (skipNextPausedRenderRef.current && playheadChanged && !modifiedChanged) {
+      skipNextPausedRenderRef.current = false;
+      return;
+    }
 
     const doRender = async (time: number) => {
       if (renderInFlightRef.current) {

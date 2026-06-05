@@ -582,6 +582,94 @@ function drawFrameWithTransform(
   context.restore();
 }
 
+async function normalizeSequenceFrameAlpha(bitmap: ImageBitmap): Promise<ImageBitmap> {
+  const width = bitmap.width;
+  const height = bitmap.height;
+  if (width <= 0 || height <= 0) return bitmap;
+
+  const canvas = new OffscreenCanvas(width, height);
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return bitmap;
+
+  context.clearRect(0, 0, width, height);
+  context.drawImage(bitmap, 0, 0);
+
+  const imageData = context.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  const cornerIndexes = [
+    0,
+    width - 1,
+    (height - 1) * width,
+    height * width - 1,
+  ];
+  const corners = cornerIndexes.map((pixelIndex) => {
+    const offset = pixelIndex * 4;
+    return {
+      r: data[offset] ?? 0,
+      g: data[offset + 1] ?? 0,
+      b: data[offset + 2] ?? 0,
+      a: data[offset + 3] ?? 0,
+    };
+  });
+
+  if (corners.some((color) => color.a < 245)) return bitmap;
+
+  const average = corners.reduce(
+    (sum, color) => ({
+      r: sum.r + color.r / corners.length,
+      g: sum.g + color.g / corners.length,
+      b: sum.b + color.b / corners.length,
+    }),
+    { r: 0, g: 0, b: 0 },
+  );
+  const isLightBackground = average.r > 220 && average.g > 220 && average.b > 220;
+  const cornersMatch = corners.every((color) => {
+    const distance =
+      Math.abs(color.r - average.r) +
+      Math.abs(color.g - average.g) +
+      Math.abs(color.b - average.b);
+    return distance < 42;
+  });
+  if (!isLightBackground || !cornersMatch) return bitmap;
+
+  const visited = new Uint8Array(width * height);
+  const queue = [...cornerIndexes];
+  const tolerance = 54;
+  let changed = false;
+
+  const matchesBackground = (pixelIndex: number): boolean => {
+    const offset = pixelIndex * 4;
+    const alpha = data[offset + 3] ?? 0;
+    if (alpha < 16) return false;
+    const distance =
+      Math.abs((data[offset] ?? 0) - average.r) +
+      Math.abs((data[offset + 1] ?? 0) - average.g) +
+      Math.abs((data[offset + 2] ?? 0) - average.b);
+    return distance <= tolerance;
+  };
+
+  while (queue.length > 0) {
+    const pixelIndex = queue.pop()!;
+    if (pixelIndex < 0 || pixelIndex >= visited.length || visited[pixelIndex]) continue;
+    visited[pixelIndex] = 1;
+    if (!matchesBackground(pixelIndex)) continue;
+
+    data[pixelIndex * 4 + 3] = 0;
+    changed = true;
+
+    const x = pixelIndex % width;
+    const y = Math.floor(pixelIndex / width);
+    if (x > 0) queue.push(pixelIndex - 1);
+    if (x < width - 1) queue.push(pixelIndex + 1);
+    if (y > 0) queue.push(pixelIndex - width);
+    if (y < height - 1) queue.push(pixelIndex + width);
+  }
+
+  if (!changed) return bitmap;
+  context.putImageData(imageData, 0, 0);
+  return createImageBitmap(canvas);
+}
+
 async function createSequenceActionThumbnail(
   project: Project,
   action: AvatarSequenceAction,
@@ -607,7 +695,8 @@ async function createSequenceActionThumbnail(
   if (!thumbnailContext) return null;
 
   try {
-    const bitmap = await createImageBitmap(media.blob);
+    const rawBitmap = await createImageBitmap(media.blob);
+    const bitmap = await normalizeSequenceFrameAlpha(rawBitmap);
     sourceContext.clearRect(0, 0, sourceCanvas.width, sourceCanvas.height);
     drawFrameWithTransform(
       sourceContext,
@@ -625,6 +714,7 @@ async function createSequenceActionThumbnail(
       thumbnailCanvas.height,
     );
     bitmap.close();
+    if (bitmap !== rawBitmap) rawBitmap.close();
     return thumbnailCanvas.toDataURL("image/png");
   } catch {
     return null;
@@ -686,9 +776,11 @@ async function encodeFramePlanVideo(
     context.clearRect(0, 0, canvas.width, canvas.height);
     const media = mediaById.get(frame.mediaId);
     if (media?.blob) {
-      const bitmap = await createImageBitmap(media.blob);
+      const rawBitmap = await createImageBitmap(media.blob);
+      const bitmap = await normalizeSequenceFrameAlpha(rawBitmap);
       drawFrameWithTransform(context, bitmap, transform, canvas.width, canvas.height);
       bitmap.close();
+      if (bitmap !== rawBitmap) rawBitmap.close();
     }
 
     const duration = Math.max(MIN_SEQUENCE_FRAME_DURATION_SEC, frame.duration);
