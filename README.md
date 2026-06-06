@@ -68,6 +68,22 @@ pnpm preview
 
 生产构建来自 `apps/web`。
 
+### Cloudflare Pages 部署
+
+如果通过 Cloudflare Pages 连接 GitHub 仓库部署，推荐使用 Pages 的 Git 集成自动部署，不需要额外填写 Wrangler 部署命令。
+
+推荐配置：
+
+```text
+Production branch: main
+Root directory: 留空或仓库根目录
+Build command: pnpm build
+Build output directory: apps/web/dist
+Deploy command: 留空
+```
+
+不要把 Deploy command 设置为 `npx wrangler deploy`。这是 Workers 的部署路径，Cloudflare Pages 静态站点会在 build 成功后自动上传 `apps/web/dist`。
+
 ### 项目结构
 
 ```text
@@ -180,6 +196,22 @@ pnpm preview
 ```
 
 The production build is generated from `apps/web`.
+
+### Cloudflare Pages Deployment
+
+If you deploy through Cloudflare Pages with the GitHub integration, use Pages' automatic deployment flow. You do not need an extra Wrangler deploy command.
+
+Recommended settings:
+
+```text
+Production branch: main
+Root directory: empty, or the repository root
+Build command: pnpm build
+Build output directory: apps/web/dist
+Deploy command: empty
+```
+
+Do not set the deploy command to `npx wrangler deploy`. That is the Workers deployment path. For a Cloudflare Pages static site, Pages automatically uploads `apps/web/dist` after the build succeeds.
 
 ### Project Layout
 
