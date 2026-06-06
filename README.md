@@ -8,6 +8,8 @@
 
 ORAnimSpeaker 是一个基于浏览器的视频编辑工具，用于根据音频生成角色动画。
 
+在线预览：[https://oranimspeaker.pages.dev/](https://oranimspeaker.pages.dev/)
+
 你可以为角色配置“静止”“说话”和额外的手动动作，动作素材可以是视频，也可以是图片序列帧。导入音频后，应用会根据音频中的说话片段在时间线上生成角色动画，并支持在 Player 中预览、添加背景轨道、手动覆盖动作以及从浏览器导出视频。
 
 ### 项目来源
@@ -136,6 +138,8 @@ pnpm lint         # 运行 lint
 ## English
 
 ORAnimSpeaker is a browser-based editor for creating audio-driven character animation.
+
+Live preview: [https://oranimspeaker.pages.dev/](https://oranimspeaker.pages.dev/)
 
 It lets you bind character actions to videos or image sequences, import an audio track, generate character animation on the timeline, preview the result in the Player, add background layers, apply manual action overrides, and export the final video from the browser.
 
