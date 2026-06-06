@@ -1,94 +1,102 @@
 # ORAnimSpeaker
 
-音频驱动角色动画生成与视频编辑工具。
+ORAnimSpeaker is a browser-based editor for creating audio-driven character animation.
 
-## 快速开始
+It lets you bind character actions to videos or image sequences, import an audio track, generate character animation on the timeline, preview the result in the Player, and export the final video from the browser.
+
+## Features
+
+- Configure required idle and talking actions.
+- Add extra manual actions for timeline overrides.
+- Use either action videos or image sequences.
+- Generate a character animation track from an audio track.
+- Add background colors and other timeline layers.
+- Preview the composition in the browser Player.
+- Export video through the web editor.
+
+## Requirements
+
+- Node.js 20 or newer
+- pnpm 9
+- Chrome or another modern Chromium-based browser is recommended
+
+Preview and export performance depends on the user's browser, CPU, GPU, memory, media format, and project complexity.
+
+## Quick Start
 
 ```bash
-# 安装依赖
-npm install
+corepack enable
+corepack prepare pnpm@9.0.0 --activate
+pnpm install
+pnpm dev
+```
 
-# 启动（开发模式，带 DevTools）
+Open:
+
+```text
+http://localhost:5173/#/editor
+```
+
+If dependencies are already installed, this root npm script also works:
+
+```bash
 npm run dev
-
-# 正式启动
-npm start
 ```
 
-## 素材目录结构
+The npm script delegates to pnpm internally because this repository uses pnpm workspaces.
 
-```
-assets/
-├── config.json          ← 角色配置文件（可放到任意位置）
-└── sprites/
-    ├── mouth/
-    │   ├── closed.png   ← 闭口
-    │   ├── small.png    ← 微张
-    │   ├── medium.png   ← 中张
-    │   ├── large.png    ← 大张
-    │   └── xlarge.png   ← 极大张
-    └── idle/
-        ├── blink/
-        │   ├── 01.png ~ 07.png
-        ├── wave/
-        │   ├── 01.png ~ 08.png
-        └── breathe/
-            ├── 01.png ~ 05.png
+## Build
+
+```bash
+pnpm build
+pnpm preview
 ```
 
-## 配置文件说明 (config.json)
+The production build is generated from `apps/web`.
 
-```json
-{
-  "character": {
-    "name": "角色名",
-    "width": 600,       // 画布宽度（与素材分辨率一致）
-    "height": 700
-  },
-  "mouth": {
-    "states": {
-      "closed": "相对路径.png",   // 5 档口型
-      "small": "...",
-      "medium": "...",
-      "large": "...",
-      "xlarge": "..."
-    },
-    "thresholds": {
-      "small":  0.02,   // RMS 阈值，0~1，可调整
-      "medium": 0.08,
-      "large":  0.18,
-      "xlarge": 0.35
-    }
-  },
-  "idle": [
-    {
-      "name": "动作名称",
-      "fps": 24,           // 序列帧播放帧率
-      "weight": 1,         // 随机权重，越大越常出现
-      "frames": ["01.png", "02.png", ...]
-    }
-  ]
-}
+## Project Layout
+
+```text
+apps/web        Web editor application
+packages/core   Timeline, media, preview, export, storage, and engine logic
+packages/ui     Shared UI components
+scripts         Utility scripts
+docs            Project notes and design documents
 ```
 
-## 使用流程
+The current maintained target is the browser version at `localhost:5173`. The older Electron prototype and the unused image-editor package have been removed from this trimmed workspace.
 
-1. `npm start` 启动应用
-2. 点击"加载角色配置"，选择 `config.json`
-3. 选择"使用麦克风"或"导入音频文件"
-4. 角色会实时根据音量切换口型/待机动画
+## Local Data
 
-## 参数调节
+Project data is stored in the user's browser, mainly through IndexedDB and localStorage.
 
-| 参数 | 说明 |
-|------|------|
-| 静默阈值 | 低于此 RMS 值判定为静默，越小越灵敏 |
-| 静默延迟 | 静默持续多少毫秒才切换到 IDLE 状态 |
-| 动作间隔 | 待机动画触发的平均间隔秒数 |
+Common stores include:
 
-## 素材建议
+```text
+localStorage:
+  or-animspeaker:recent-projects
 
-- PNG 带透明通道，背景透明
-- 口型图整图合成（含完整角色）
-- 待机动画建议 24fps，3~4 秒 = 72~96 帧
-- 所有素材尺寸保持一致（与 config.json 中 width/height 对应）
+IndexedDB:
+  openreel-autosave
+  openreel-projects
+  openreel-db
+```
+
+Because this is browser-local data, clearing browser data, switching browsers, using private browsing, or moving to another computer may make local project history unavailable.
+
+## Development Commands
+
+```bash
+pnpm dev          # Start the web editor
+pnpm build        # Build WASM helpers and the web app
+pnpm preview      # Preview the production build
+pnpm typecheck    # Run TypeScript checks across workspaces
+pnpm test         # Run tests across workspaces
+pnpm lint         # Run lint checks across workspaces
+```
+
+## Notes
+
+- Browser export currently runs on the client side.
+- Large video files and long timelines can be slow depending on the machine.
+- Existing internal package names such as `@openreel/core` and some storage keys remain for compatibility with the original codebase.
