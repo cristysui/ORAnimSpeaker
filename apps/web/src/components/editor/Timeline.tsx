@@ -18,6 +18,8 @@ import {
   Scissors,
   ChevronUp,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Trash2,
   Plus,
   ChevronDown as ChevronDownIcon,
@@ -233,6 +235,22 @@ export const Timeline: React.FC = () => {
       tracksRef.current.scrollLeft = Math.max(0, newScrollX);
     }
   }, [playheadPosition, playbackState, pixelsPerSecond, scrollX, viewportWidth]);
+
+  const pageTimeline = useCallback(
+    (direction: -1 | 1) => {
+      const tracksEl = tracksRef.current;
+      if (!tracksEl) return;
+      const pageWidth = Math.max(120, tracksEl.clientWidth / 2);
+      const maxScroll = Math.max(0, tracksEl.scrollWidth - tracksEl.clientWidth);
+      const nextScrollX = Math.min(
+        maxScroll,
+        Math.max(0, tracksEl.scrollLeft + direction * pageWidth),
+      );
+      tracksEl.scrollTo({ left: nextScrollX, behavior: "smooth" });
+      setScrollX(nextScrollX);
+    },
+    [setScrollX],
+  );
 
   const handleSelectClip = useCallback(
     (clipId: string, addToSelection: boolean) => {
@@ -911,6 +929,17 @@ export const Timeline: React.FC = () => {
           >
             <Rows2 size={14} />
           </TLTool>
+
+          <div className="w-px h-4 bg-border mx-1.5" />
+
+          <div className="flex items-center gap-0.5">
+            <TLTool onClick={() => pageTimeline(-1)} title="Move timeline left half view">
+              <ChevronLeft size={14} />
+            </TLTool>
+            <TLTool onClick={() => pageTimeline(1)} title="Move timeline right half view">
+              <ChevronRight size={14} />
+            </TLTool>
+          </div>
 
           <div className="w-px h-4 bg-border mx-1.5" />
 
