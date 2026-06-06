@@ -1069,6 +1069,50 @@ export const Preview: React.FC = () => {
 
   const isPlaying = playbackState === "playing";
 
+  const pausedPreviewSignature = useMemo(() => {
+    const clipSignature = project.timeline.tracks
+      .map((track) => ({
+        id: track.id,
+        type: track.type,
+        hidden: track.hidden,
+        locked: track.locked,
+        clips: track.clips.map((clip) => {
+          const extendedClip = clip as PreviewClip & {
+            hidden?: boolean;
+            opacity?: number;
+            crop?: unknown;
+            fitMode?: unknown;
+          };
+          return {
+            id: clip.id,
+            mediaId: clip.mediaId,
+            startTime: clip.startTime,
+            duration: clip.duration,
+            inPoint: clip.inPoint,
+            outPoint: clip.outPoint,
+            hidden: extendedClip.hidden,
+            opacity: extendedClip.opacity,
+            transform: clip.transform,
+            crop: extendedClip.crop,
+            fitMode: extendedClip.fitMode,
+            blendMode: clip.blendMode,
+          };
+        }),
+      }));
+
+    return JSON.stringify({
+      width: project.settings.width,
+      height: project.settings.height,
+      duration: project.timeline.duration,
+      tracks: clipSignature,
+    });
+  }, [
+    project.settings.width,
+    project.settings.height,
+    project.timeline.duration,
+    project.timeline.tracks,
+  ]);
+
   const motionPathClip = React.useMemo(() => {
     if (!motionPathMode || !motionPathClipId) return null;
     for (const track of project.timeline.tracks) {
@@ -5139,6 +5183,7 @@ export const Preview: React.FC = () => {
   ]);
 
   const lastModifiedAtRef = useRef<number>(project.modifiedAt);
+  const lastPausedPreviewSignatureRef = useRef<string>(pausedPreviewSignature);
   const lastPlayheadForRenderRef = useRef<number>(playheadPosition);
   const modifiedRenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const renderInFlightRef = useRef<boolean>(false);
@@ -5150,6 +5195,7 @@ export const Preview: React.FC = () => {
 
     if (isInteractingRef.current) {
       lastModifiedAtRef.current = project.modifiedAt;
+      lastPausedPreviewSignatureRef.current = pausedPreviewSignature;
       return;
     }
 
@@ -5158,8 +5204,11 @@ export const Preview: React.FC = () => {
 
     const playheadChanged = playheadPosition !== lastPlayheadForRenderRef.current;
     const modifiedChanged = project.modifiedAt !== lastModifiedAtRef.current;
+    const compositionChanged =
+      pausedPreviewSignature !== lastPausedPreviewSignatureRef.current;
 
     lastModifiedAtRef.current = project.modifiedAt;
+    lastPausedPreviewSignatureRef.current = pausedPreviewSignature;
     lastPlayheadForRenderRef.current = playheadPosition;
 
     const previousRenderTime = lastPreviewRenderTimeRef.current;
@@ -5171,7 +5220,12 @@ export const Preview: React.FC = () => {
     }
     lastPreviewRenderTimeRef.current = playheadPosition;
 
-    if (skipNextPausedRenderRef.current && playheadChanged && !modifiedChanged) {
+    if (
+      skipNextPausedRenderRef.current &&
+      playheadChanged &&
+      !modifiedChanged &&
+      !compositionChanged
+    ) {
       skipNextPausedRenderRef.current = false;
       return;
     }
@@ -5204,7 +5258,7 @@ export const Preview: React.FC = () => {
 
     if (playheadChanged) {
       doRender(playheadPosition);
-    } else if (modifiedChanged) {
+    } else if (modifiedChanged || compositionChanged) {
       if (modifiedRenderTimerRef.current) {
         clearTimeout(modifiedRenderTimerRef.current);
       }
@@ -5228,6 +5282,7 @@ export const Preview: React.FC = () => {
     renderFallbackFrame,
     releaseScrubVideoElements,
     project.modifiedAt,
+    pausedPreviewSignature,
     isDark,
   ]);
 

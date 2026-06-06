@@ -32,7 +32,7 @@ export function MobileBlocker() {
 
         <div className="space-y-3">
           <h1 className="text-5xl font-bold text-text-primary tracking-tight">
-            OpenReel
+            ORAnimSpeaker
           </h1>
           <div className="flex items-center justify-center gap-2">
             <div className="h-px w-8 bg-primary/50" />
@@ -45,7 +45,7 @@ export function MobileBlocker() {
 
         <div className="space-y-4 bg-background-secondary/50 backdrop-blur-sm rounded-xl p-6 border border-border">
           <p className="text-base text-text-primary leading-relaxed">
-            OpenReel is a professional video editor that requires a desktop or
+            ORAnimSpeaker is an audio-driven character animation editor that requires a desktop or
             laptop computer.
           </p>
           <p className="text-sm text-text-muted">
@@ -56,7 +56,7 @@ export function MobileBlocker() {
 
         <div className="pt-2">
           <a
-            href="https://openreel.video"
+            href="/"
             className="inline-flex items-center gap-2 px-8 py-3 bg-primary hover:bg-primary-hover active:bg-primary-active text-white font-medium rounded-lg transition-all duration-200 shadow-glow hover:shadow-glow-lg transform hover:scale-[1.02] active:scale-[0.98]"
           >
             Learn More

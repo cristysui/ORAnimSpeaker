@@ -6,7 +6,7 @@
 @tailwind utilities;
 
 /* ============================================================
-   OpenReel Editor — v2 design tokens (cinematic dark, emerald)
+   ORAnimSpeaker Editor — v2 design tokens (cinematic dark, emerald)
    All values are CSS variables. Components use Tailwind utilities
    that map to these via tailwind.config.js.
    ============================================================ */

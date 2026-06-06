@@ -49,7 +49,7 @@ function createWindow() {
       // 允许加载本地文件资源
       webSecurity: false
     },
-    title: '语音人物工具'
+    title: 'ORAnimSpeaker'
   })
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'))

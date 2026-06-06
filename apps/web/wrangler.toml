@@ -1,13 +1,13 @@
-name = "openreel"
+name = "or-animspeaker"
 compatibility_date = "2024-01-01"
 pages_build_output_dir = "dist"
 
-# Cloudflare Pages configuration for OpenReel video editor
+# Cloudflare Pages configuration for ORAnimSpeaker
 # This app requires special headers for SharedArrayBuffer (used by FFmpeg.wasm)
-# Custom domain: app.openreel.video
+# Custom domain: app.oranimspeaker.com
 
 [env.production]
-name = "openreel"
+name = "or-animspeaker"
 
 [env.preview]
-name = "openreel-preview"
+name = "or-animspeaker-preview"

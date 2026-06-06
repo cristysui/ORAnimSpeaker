@@ -1,5 +1,5 @@
 /**
- * OpenReel Service Worker
+ * ORAnimSpeaker Service Worker
  *
  * Handles offline functionality by caching application assets.
  * Implements a cache-first strategy for static assets and network-first for API calls.
@@ -302,7 +302,7 @@ async function getCacheStatus() {
 }
 
 /**
- * Clear all OpenReel caches
+ * Clear all ORAnimSpeaker caches
  */
 async function clearAllCaches() {
   const cacheNames = await caches.keys();

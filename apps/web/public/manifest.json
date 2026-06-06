@@ -1,7 +1,7 @@
 {
-  "name": "OpenReel",
-  "short_name": "OpenReel",
-  "description": "Professional browser-based video, audio, and photo editing application",
+  "name": "ORAnimSpeaker",
+  "short_name": "ORAnimSpeaker",
+  "description": "Audio-driven character animation editor",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f172a",

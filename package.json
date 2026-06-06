@@ -1,8 +1,8 @@
 {
-  "name": "voice-character-tool",
+  "name": "or-animspeaker",
   "version": "1.0.0",
   "private": true,
-  "description": "OpenReel-based voice character video editor",
+  "description": "ORAnimSpeaker voice character animation editor",
   "main": "main.js",
   "packageManager": "pnpm@9.0.0",
   "workspaces": [
@@ -10,12 +10,12 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npx pnpm --filter @openreel/web dev",
-    "dev:web": "npx pnpm --filter @openreel/web dev",
-    "build": "npx pnpm build:wasm && npx pnpm --filter @openreel/web build",
-    "build:web": "npx pnpm --filter @openreel/web build",
+    "dev": "npx pnpm --filter @or-animspeaker/web dev",
+    "dev:web": "npx pnpm --filter @or-animspeaker/web dev",
+    "build": "npx pnpm build:wasm && npx pnpm --filter @or-animspeaker/web build",
+    "build:web": "npx pnpm --filter @or-animspeaker/web build",
     "build:wasm": "npx pnpm --filter @openreel/core build:wasm",
-    "preview": "npx pnpm --filter @openreel/web preview",
+    "preview": "npx pnpm --filter @or-animspeaker/web preview",
     "test": "npx pnpm -r test:run",
     "typecheck": "npx pnpm -r typecheck",
     "lint": "npx pnpm -r lint",
@@ -35,8 +35,8 @@
     "electron-builder": "^24.0.0"
   },
   "build": {
-    "appId": "com.voicecharacter.tool",
-    "productName": "语音人物工具",
+    "appId": "com.oranimspeaker.app",
+    "productName": "ORAnimSpeaker",
     "mac": {
       "category": "public.app-category.utilities",
       "extendInfo": {

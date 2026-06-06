@@ -8,7 +8,7 @@ import { migrateProject, CURRENT_VERSION } from './services/project-migration';
 // migration utilities, and the store to confirm the whole pipeline is wired up
 // and importing correctly.
 
-describe('OpenReel Image – baseline smoke tests', () => {
+describe('ORAnimSpeaker Image baseline smoke tests', () => {
   // Schema is importable.
   it('project schema module is importable', () => {
     expect(typeof parseProject).toBe('function');
@@ -181,4 +181,3 @@ describe('OpenReel Image – baseline smoke tests', () => {
     expect(migrated.version).toBe(1);
   });
 });
-

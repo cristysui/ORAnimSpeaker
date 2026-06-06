@@ -277,7 +277,7 @@ class ProjectManager {
         suggestedName: `${project.name}.oreel`,
         types: [
           {
-            description: "OpenReel Project",
+            description: "ORAnimSpeaker Project",
             accept: { "application/json": [".oreel", ".json"] },
           },
         ],
@@ -345,7 +345,7 @@ class ProjectManager {
         const [handle] = await win.showOpenFilePicker!({
           types: [
             {
-              description: "OpenReel Project",
+              description: "ORAnimSpeaker Project",
               accept: { "application/json": [".oreel", ".json"] },
             },
           ],

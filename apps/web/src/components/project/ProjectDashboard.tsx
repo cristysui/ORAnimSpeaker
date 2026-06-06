@@ -4,7 +4,7 @@ import { FolderOpen, Plus, Video } from "lucide-react";
 import { useProjectStore } from "../../stores/project-store";
 import type { AppRoute } from "../../hooks/use-router";
 
-const RECENT_PROJECTS_KEY = "voice-character-tool:recent-projects";
+const RECENT_PROJECTS_KEY = "or-animspeaker:recent-projects";
 
 interface StoredProject {
   id: string;
@@ -102,7 +102,7 @@ export const ProjectDashboard: React.FC<{
             <div>
               <h1 className="text-2xl font-semibold">角色视频编辑器</h1>
               <p className="text-sm text-text-secondary">
-                基于 OpenReel 的项目管理和角色动画生成工作流。
+                ORAnimSpeaker 项目管理和角色动画生成工作流。
               </p>
             </div>
           </div>

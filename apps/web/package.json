@@ -1,5 +1,5 @@
 {
-  "name": "@openreel/web",
+  "name": "@or-animspeaker/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,8 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "deploy": "wrangler pages deploy dist --project-name=openreel",
-    "deploy:preview": "wrangler pages deploy dist --project-name=openreel --branch=preview",
+    "deploy": "wrangler pages deploy dist --project-name=or-animspeaker",
+    "deploy:preview": "wrangler pages deploy dist --project-name=or-animspeaker --branch=preview",
     "test": "vitest",
     "test:run": "vitest run",
     "lint": "eslint src",

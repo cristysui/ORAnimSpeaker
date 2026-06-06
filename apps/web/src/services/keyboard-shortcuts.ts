@@ -414,8 +414,8 @@ const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
 const PRESETS: ShortcutPreset[] = [
   {
     id: "openreel",
-    name: "OpenReel Default",
-    description: "Default OpenReel shortcuts",
+    name: "ORAnimSpeaker Default",
+    description: "Default ORAnimSpeaker shortcuts",
     shortcuts: {},
   },
   {
