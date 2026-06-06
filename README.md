@@ -12,7 +12,7 @@ ORAnimSpeaker 是一个基于浏览器的视频编辑工具，用于根据音频
 
 ### 项目来源
 
-ORAnimSpeaker 基于开源项目 [OpenReel](https://github.com/openreel/openreel) 改造而来。
+ORAnimSpeaker 基于开源项目 [Augani/openreel-video](https://github.com/Augani/openreel-video) 改造而来。
 
 本项目复用了 OpenReel 的 Web/React 编辑器架构、时间线、媒体处理和部分导出能力，并在此基础上重构了左侧素材面板、角色动作配置、音频驱动角色动画生成、手动动画控制台和相关预览交互。
 
@@ -125,7 +125,7 @@ It lets you bind character actions to videos or image sequences, import an audio
 
 ### Origin
 
-ORAnimSpeaker is built on top of the open-source project [OpenReel](https://github.com/openreel/openreel).
+ORAnimSpeaker is built on top of the open-source project [Augani/openreel-video](https://github.com/Augani/openreel-video).
 
 This project reuses OpenReel's Web/React editor architecture, timeline, media processing, and parts of its export pipeline. On top of that foundation, ORAnimSpeaker redesigns the asset panel, character action configuration, audio-driven character animation generation, manual animation console, and related preview interactions.
 
