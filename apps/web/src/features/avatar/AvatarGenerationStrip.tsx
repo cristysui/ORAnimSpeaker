@@ -4,8 +4,10 @@ import { useProjectStore } from "../../stores/project-store";
 import { toast } from "../../stores/notification-store";
 import { getAvatarConfig, hasSequenceConfig, hasVideoConfig } from "./avatar-project";
 import { generateAvatarFromSequence, generateAvatarFromVideo } from "./avatar-timeline";
+import { useI18n } from "../../i18n";
 
 export const AvatarGenerationStrip: React.FC = () => {
+  const { t } = useI18n();
   const project = useProjectStore((state) => state.project);
   const config = useMemo(() => getAvatarConfig(project), [project]);
   const [busyClipId, setBusyClipId] = useState<string | null>(null);
@@ -38,8 +40,8 @@ export const AvatarGenerationStrip: React.FC = () => {
       toast.success(successMessage);
     } catch (error) {
       toast.error(
-        "生成角色动画失败",
-        error instanceof Error ? error.message : "未知错误",
+        t("avatar.generateFailed"),
+        error instanceof Error ? error.message : "Unknown error",
       );
     } finally {
       setBusyClipId(null);
@@ -50,7 +52,7 @@ export const AvatarGenerationStrip: React.FC = () => {
     <div className="border-b border-border bg-bg-1 px-3 py-2">
       <div className="mb-2 flex items-center gap-2 text-xs font-medium text-fg-2">
         <Wand2 className="h-3.5 w-3.5 text-accent" />
-        音频驱动角色动画
+        {t("avatar.generationStripTitle")}
       </div>
       <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
         {audioClips.map(({ clip, track }) => (
@@ -69,12 +71,12 @@ export const AvatarGenerationStrip: React.FC = () => {
                   void runGeneration(
                     clip.id,
                     generateAvatarFromSequence,
-                    "已从序列帧生成角色动画",
+                    t("avatar.generatedFromSequence"),
                   )
                 }
               >
                 <ImagePlus className="h-3.5 w-3.5" />
-                从序列帧生成动画
+                {t("avatar.generateFromSequence")}
               </button>
             )}
             {canGenerateVideo && (
@@ -85,12 +87,12 @@ export const AvatarGenerationStrip: React.FC = () => {
                   void runGeneration(
                     clip.id,
                     generateAvatarFromVideo,
-                    "已从视频生成角色动画",
+                    t("avatar.generatedFromVideo"),
                   )
                 }
               >
                 <Film className="h-3.5 w-3.5" />
-                从视频生成动画
+                {t("avatar.generateFromVideo")}
               </button>
             )}
           </div>

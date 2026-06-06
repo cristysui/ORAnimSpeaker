@@ -18,6 +18,7 @@ import {
   SOCIAL_MEDIA_CATEGORY_INFO,
   type SocialMediaCategory,
 } from "@openreel/core";
+import { useI18n } from "../../i18n";
 
 interface CategoryTabsProps {
   selectedCategory: SocialMediaCategory | "all";
@@ -59,6 +60,7 @@ export const CategoryTabs: React.FC<CategoryTabsProps> = ({
   onSelectCategory,
   categoryStats,
 }) => {
+  const { t } = useI18n();
   const [expandedPlatform, setExpandedPlatform] = React.useState<string | null>(
     null,
   );
@@ -90,7 +92,7 @@ export const CategoryTabs: React.FC<CategoryTabsProps> = ({
           }`}
         >
           <LayoutGrid size={14} />
-          All
+          {t("welcome.all")}
           <span
             className={`text-xs ${selectedCategory === "all" ? "text-black/60" : "text-text-muted"}`}
           >

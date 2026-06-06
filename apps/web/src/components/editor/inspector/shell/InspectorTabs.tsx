@@ -1,6 +1,7 @@
 import * as React from "react";
 import { cn } from "@openreel/ui/lib/utils";
 import type { InspectorTabDef, InspectorTabId } from "../clip-tabs.config";
+import { useI18n, type TranslationKey } from "../../../../i18n";
 
 export interface InspectorTabsProps {
   tabs: InspectorTabDef[];
@@ -9,6 +10,7 @@ export interface InspectorTabsProps {
 }
 
 export const InspectorTabs: React.FC<InspectorTabsProps> = ({ tabs, activeId, onSelect }) => {
+  const { t } = useI18n();
   const handleKeyDown = (event: React.KeyboardEvent, index: number) => {
     if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
     event.preventDefault();
@@ -20,7 +22,7 @@ export const InspectorTabs: React.FC<InspectorTabsProps> = ({ tabs, activeId, on
   return (
     <div
       role="tablist"
-      aria-label="Inspector tabs"
+      aria-label={t("inspector.tabs")}
       className="flex items-center gap-0.5 px-2 border-b border-border overflow-x-auto scrollbar-none shrink-0"
     >
       {tabs.map((tab, index) => {
@@ -42,7 +44,7 @@ export const InspectorTabs: React.FC<InspectorTabsProps> = ({ tabs, activeId, on
             )}
           >
             <Icon size={13} />
-            <span>{tab.label}</span>
+            <span>{t(`tab.${tab.id}` as TranslationKey)}</span>
           </button>
         );
       })}

@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from "react";
 import type { Project, ProjectSettings } from "@openreel/core";
-import { FolderOpen, Plus, Video } from "lucide-react";
+import { FolderOpen, Languages, Plus, Video } from "lucide-react";
 import { useProjectStore } from "../../stores/project-store";
 import type { AppRoute } from "../../hooks/use-router";
+import { useI18n } from "../../i18n";
 
 const RECENT_PROJECTS_KEY = "or-animspeaker:recent-projects";
 
@@ -62,19 +63,20 @@ const sanitizeProject = (project: Project): Project => ({
 export const ProjectDashboard: React.FC<{
   navigate: (route: AppRoute) => void;
 }> = ({ navigate }) => {
+  const { language, setLanguage, t } = useI18n();
   const createNewProject = useProjectStore((state) => state.createNewProject);
   const loadProject = useProjectStore((state) => state.loadProject);
-  const [projectName, setProjectName] = useState("角色视频项目");
+  const [projectName, setProjectName] = useState(() => t("welcome.defaultProjectName"));
   const [recentProjects, setRecentProjects] = useState<StoredProject[]>(() => readStoredProjects());
 
   const presets = useMemo(() => [
-    { label: "横屏 1920 x 1080", width: 1920, height: 1080 },
-    { label: "竖屏 1080 x 1920", width: 1080, height: 1920 },
-    { label: "方形 1080 x 1080", width: 1080, height: 1080 },
-  ], []);
+    { label: t("welcome.landscape"), width: 1920, height: 1080 },
+    { label: t("welcome.portrait"), width: 1080, height: 1920 },
+    { label: t("welcome.square"), width: 1080, height: 1080 },
+  ], [t]);
 
   const startNewProject = (settings: Partial<ProjectSettings>) => {
-    createNewProject(projectName.trim() || "角色视频项目", {
+    createNewProject(projectName.trim() || t("welcome.defaultProjectName"), {
       width: settings.width,
       height: settings.height,
       frameRate: 30,
@@ -94,28 +96,37 @@ export const ProjectDashboard: React.FC<{
   return (
     <div className="h-full w-full overflow-y-auto bg-background text-text-primary">
       <div className="mx-auto flex min-h-full max-w-6xl flex-col px-8 py-10">
-        <header className="mb-10">
+        <header className="mb-10 flex items-start justify-between gap-4">
           <div className="mb-3 flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/15 text-primary">
               <Video className="h-6 w-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-semibold">角色视频编辑器</h1>
+              <h1 className="text-2xl font-semibold">{t("welcome.title")}</h1>
               <p className="text-sm text-text-secondary">
-                ORAnimSpeaker 项目管理和角色动画生成工作流。
+                {t("welcome.subtitle")}
               </p>
             </div>
           </div>
+          <button
+            type="button"
+            onClick={() => setLanguage(language === "zh" ? "en" : "zh")}
+            title={t("welcome.language")}
+            className="inline-flex items-center gap-2 rounded-lg border border-border bg-background-secondary px-3 py-2 text-sm text-text-secondary transition hover:border-primary hover:text-text-primary"
+          >
+            <Languages className="h-4 w-4" />
+            {language === "zh" ? "中文" : "English"}
+          </button>
         </header>
 
         <main className="grid gap-6 lg:grid-cols-[1fr_420px]">
           <section className="rounded-2xl border border-border bg-background-secondary p-6">
             <div className="mb-5 flex items-center gap-2">
               <Plus className="h-5 w-5 text-primary" />
-              <h2 className="text-lg font-medium">新建项目</h2>
+              <h2 className="text-lg font-medium">{t("welcome.newProject")}</h2>
             </div>
             <label className="mb-4 block text-sm text-text-secondary">
-              项目名称
+              {t("welcome.projectName")}
               <input
                 value={projectName}
                 onChange={(event) => setProjectName(event.target.value)}
@@ -139,10 +150,10 @@ export const ProjectDashboard: React.FC<{
           <section className="rounded-2xl border border-border bg-background-secondary p-6">
             <div className="mb-5 flex items-center gap-2">
               <FolderOpen className="h-5 w-5 text-primary" />
-              <h2 className="text-lg font-medium">最近项目</h2>
+              <h2 className="text-lg font-medium">{t("welcome.recentProjects")}</h2>
             </div>
             {recentProjects.length === 0 ? (
-              <p className="text-sm text-text-secondary">还没有最近项目。新建项目后会显示在这里。</p>
+              <p className="text-sm text-text-secondary">{t("welcome.noRecentProjects")}</p>
             ) : (
               <div className="space-y-3">
                 {recentProjects.map((project) => (

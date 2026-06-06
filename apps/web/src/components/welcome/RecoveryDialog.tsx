@@ -12,6 +12,7 @@ import {
   CollapsibleContent,
 } from "@openreel/ui";
 import type { AutoSaveMetadata } from "../../services/auto-save";
+import { useI18n } from "../../i18n";
 
 interface RecoveryDialogProps {
   saves: AutoSaveMetadata[];
@@ -20,20 +21,20 @@ interface RecoveryDialogProps {
   onClearAll?: () => void;
 }
 
-function formatTimeAgo(timestamp: number): string {
+function formatTimeAgo(timestamp: number, t: ReturnType<typeof useI18n>["t"]): string {
   const seconds = Math.floor((Date.now() - timestamp) / 1000);
 
-  if (seconds < 60) return "just now";
+  if (seconds < 60) return t("welcome.justNow");
   if (seconds < 3600) {
     const mins = Math.floor(seconds / 60);
-    return `${mins} ${mins === 1 ? "minute" : "minutes"} ago`;
+    return t("welcome.minutesAgo", { count: mins });
   }
   if (seconds < 86400) {
     const hours = Math.floor(seconds / 3600);
-    return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
+    return t("welcome.hoursAgo", { count: hours });
   }
   const days = Math.floor(seconds / 86400);
-  return `${days} ${days === 1 ? "day" : "days"} ago`;
+  return t("welcome.daysAgo", { count: days });
 }
 
 function formatDate(timestamp: number): string {
@@ -51,6 +52,7 @@ export const RecoveryDialog: React.FC<RecoveryDialogProps> = ({
   onDismiss,
   onClearAll,
 }) => {
+  const { t } = useI18n();
   const [showOlderSaves, setShowOlderSaves] = useState(false);
   const [selectedSave, setSelectedSave] = useState<string | null>(null);
   const [isClearing, setIsClearing] = useState(false);
@@ -80,10 +82,10 @@ export const RecoveryDialog: React.FC<RecoveryDialogProps> = ({
             </div>
             <div>
               <DialogTitle className="text-base font-semibold text-text-primary">
-                Recover Your Work
+                {t("welcome.recoverTitle")}
               </DialogTitle>
               <DialogDescription className="text-sm text-text-secondary mt-0.5">
-                We found an unsaved project
+                {t("welcome.recoverDesc")}
               </DialogDescription>
             </div>
           </div>
@@ -103,7 +105,7 @@ export const RecoveryDialog: React.FC<RecoveryDialogProps> = ({
             </div>
             <div className="flex items-center gap-2 text-sm text-text-muted">
               <Clock className="w-4 h-4 shrink-0" />
-              <span>Last saved {formatTimeAgo(mostRecent.timestamp)}</span>
+              <span>{t("welcome.lastSaved")} {formatTimeAgo(mostRecent.timestamp, t)}</span>
               <span className="text-text-muted/50">•</span>
               <span className="text-text-muted/70 truncate">
                 {formatDate(mostRecent.timestamp)}
@@ -117,14 +119,14 @@ export const RecoveryDialog: React.FC<RecoveryDialogProps> = ({
               onClick={onDismiss}
               className="flex-1"
             >
-              Start Fresh
+              {t("welcome.startFresh")}
             </Button>
             <Button
               onClick={() => handleRecover(mostRecent.id)}
               disabled={selectedSave === mostRecent.id}
               className="flex-1"
             >
-              {selectedSave === mostRecent.id ? "Recovering..." : "Recover Project"}
+              {selectedSave === mostRecent.id ? t("welcome.recovering") : t("welcome.recoverProject")}
             </Button>
           </div>
 
@@ -140,7 +142,7 @@ export const RecoveryDialog: React.FC<RecoveryDialogProps> = ({
                     className={`w-4 h-4 transition-transform duration-200 ${showOlderSaves ? "rotate-180" : ""}`}
                   />
                   <span>
-                    {olderSaves.length} older {olderSaves.length === 1 ? "save" : "saves"} available
+                    {t("welcome.olderSaves", { count: olderSaves.length })}
                   </span>
                 </CollapsibleTrigger>
                 {onClearAll && (
@@ -148,7 +150,7 @@ export const RecoveryDialog: React.FC<RecoveryDialogProps> = ({
                     onClick={handleClearAll}
                     disabled={isClearing}
                     className="p-1.5 rounded-lg text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
-                    title="Clear all saved projects"
+                    title={t("welcome.clearSaved")}
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -173,7 +175,7 @@ export const RecoveryDialog: React.FC<RecoveryDialogProps> = ({
                         </div>
                       </div>
                       <div className="text-xs text-text-muted/70 shrink-0">
-                        {formatTimeAgo(save.timestamp)}
+                        {formatTimeAgo(save.timestamp, t)}
                       </div>
                     </div>
                   </button>

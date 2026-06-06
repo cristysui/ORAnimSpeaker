@@ -23,6 +23,7 @@ import { useProjectStore } from "../../stores/project-store";
 import { useTimelineStore } from "../../stores/timeline-store";
 import { useUIStore } from "../../stores/ui-store";
 import { useThemeStore } from "../../stores/theme-store";
+import { useI18n } from "../../i18n";
 import { getRenderBridge } from "../../bridges/render-bridge";
 import { getEffectsBridge } from "../../bridges/effects-bridge";
 import {
@@ -639,6 +640,7 @@ interface ClipWithPlaceholder {
 }
 
 export const Preview: React.FC = () => {
+  const { t } = useI18n();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const videoAreaRef = useRef<HTMLDivElement>(null);
@@ -6542,7 +6544,7 @@ export const Preview: React.FC = () => {
       {/* ── Panel bar header (mockup: 'Player') ───────────────── */}
       {!isMaximized && !isFullscreen && (
         <div className="flex items-center px-3.5 py-2 border-b border-border bg-bg-1 gap-2.5 min-h-[38px] shrink-0">
-          <h2 className="text-[13px] font-semibold tracking-tight text-fg m-0">Player</h2>
+          <h2 className="text-[13px] font-semibold tracking-tight text-fg m-0">{t("preview.player")}</h2>
           <div className="ml-auto flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-accent" title="Live preview" />
           </div>

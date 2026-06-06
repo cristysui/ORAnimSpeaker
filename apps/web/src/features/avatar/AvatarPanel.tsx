@@ -30,6 +30,7 @@ import {
 import { useAvatarSelectionStore } from "./avatar-selection-store";
 import { AvatarThumbnail } from "./AvatarThumbnail";
 import { removeAvatarMediaBackground } from "./avatar-background-removal";
+import { useI18n } from "../../i18n";
 
 const KIND_LABELS: Record<AvatarActionKind, string> = {
   idle: "静止",
@@ -60,13 +61,14 @@ const formatFrameDuration = (value: number): string => {
 };
 
 export const AvatarPanel: React.FC = () => {
+  const { t } = useI18n();
   const project = useProjectStore((state) => state.project);
   const importMedia = useProjectStore((state) => state.importMedia);
   const config = useMemo(() => getAvatarConfig(project), [project]);
   const selectedConfig = useAvatarSelectionStore((state) => state.selectedConfig);
   const selectConfig = useAvatarSelectionStore((state) => state.selectConfig);
   const clearSelection = useUIStore((state) => state.clearSelection);
-  const [sequenceName, setSequenceName] = useState("手动动作");
+  const [sequenceName, setSequenceName] = useState(KIND_LABELS.action);
   const [frameDurationInput, setFrameDurationInput] = useState(
     formatFrameDuration(DEFAULT_FRAME_DURATION_SEC),
   );
@@ -129,7 +131,7 @@ export const AvatarPanel: React.FC = () => {
       }
       if (assets.length > 0) appendAvatarVideoAssets(assets);
       if (assets.length === 0) {
-        setBackgroundRemovalMessage("动作视频导入失败，请换一个浏览器可播放的视频格式。");
+        setBackgroundRemovalMessage(t("avatar.videoImportFailed"));
       }
       console.info("[Avatar] video action import complete", {
         kind,
@@ -139,7 +141,9 @@ export const AvatarPanel: React.FC = () => {
     } catch (error) {
       console.error("[Avatar] video action import failed", error);
       setBackgroundRemovalMessage(
-        `动作视频导入失败：${error instanceof Error ? error.message : "未知错误"}`,
+        t("avatar.videoImportFailedWithReason", {
+          reason: error instanceof Error ? error.message : "Unknown error",
+        }),
       );
     } finally {
       setBusy(false);
@@ -206,14 +210,14 @@ export const AvatarPanel: React.FC = () => {
     if (!media) return;
     setBusy(true);
     setBackgroundRemovalTarget(`video:${asset.id}`);
-    setBackgroundRemovalMessage("准备去背景");
+    setBackgroundRemovalMessage(t("avatar.prepareRemoveBg"));
     try {
       const file = await removeAvatarMediaBackground(media, setBackgroundRemovalMessage);
       const result = await importMedia(file);
       if (result.success && result.actionId) {
         updateAvatarVideoAssetMedia(asset.id, result.actionId);
         selectVideo(asset.id);
-        setBackgroundRemovalMessage("已生成透明背景素材");
+        setBackgroundRemovalMessage(t("avatar.transparentReady"));
       }
     } finally {
       setBusy(false);
@@ -227,14 +231,14 @@ export const AvatarPanel: React.FC = () => {
     if (!media) return;
     setBusy(true);
     setBackgroundRemovalTarget(`frame:${frame.id}`);
-    setBackgroundRemovalMessage("准备去背景");
+    setBackgroundRemovalMessage(t("avatar.prepareRemoveBg"));
     try {
       const file = await removeAvatarMediaBackground(media, setBackgroundRemovalMessage);
       const result = await importMedia(file);
       if (result.success && result.actionId) {
         updateAvatarSequenceFrameMedia(actionId, frame.id, result.actionId);
         selectSequence(actionId);
-        setBackgroundRemovalMessage("已生成透明背景素材");
+        setBackgroundRemovalMessage(t("avatar.transparentReady"));
       }
     } finally {
       setBusy(false);
@@ -248,11 +252,11 @@ export const AvatarPanel: React.FC = () => {
       <div className="flex border-b border-border bg-bg">
         <TabButton active={activeTab === "video"} onClick={() => setActiveTab("video")}>
           <Film className="h-4 w-4" />
-          视频配置
+          {t("avatar.videoConfig")}
         </TabButton>
         <TabButton active={activeTab === "sequence"} onClick={() => setActiveTab("sequence")}>
           <ImagePlus className="h-4 w-4" />
-          序列帧配置
+          {t("avatar.sequenceConfig")}
         </TabButton>
       </div>
 
@@ -260,8 +264,8 @@ export const AvatarPanel: React.FC = () => {
         {activeTab === "video" ? (
           <section className="space-y-4">
             <ActionGrid
-              title="视频动作列表"
-              description={backgroundRemovalMessage ?? "静止和说话为必填动作；手动动作可继续添加并重命名。"}
+              title={t("avatar.videoActionList")}
+              description={backgroundRemovalMessage ?? t("avatar.videoActionDesc")}
             >
               {REQUIRED_KINDS.map((kind) => (
                 <VideoActionSlot
@@ -292,13 +296,13 @@ export const AvatarPanel: React.FC = () => {
               ))}
               <VideoAddActionCard disabled={busy} onFiles={importVideos} />
             </ActionGrid>
-            <ConfigStatus ready={hasVideoConfig(config)} label="视频生成" />
+            <ConfigStatus ready={hasVideoConfig(config)} label={t("avatar.videoGeneration")} />
           </section>
         ) : (
           <section className="space-y-4">
             <div className="rounded-lg border border-border bg-bg-2 p-3">
               <label className="text-xs text-fg-muted">
-                单图时长(秒)
+                {t("avatar.frameDuration")}
                 <input
                   type="text"
                   inputMode="decimal"
@@ -320,8 +324,8 @@ export const AvatarPanel: React.FC = () => {
             </div>
 
             <ActionList
-              title="序列帧动作列表"
-              description={backgroundRemovalMessage ?? "每个动作可包含多张序列帧图片，支持拖拽排序、单帧删除和继续添加。"}
+              title={t("avatar.sequenceActionList")}
+              description={backgroundRemovalMessage ?? t("avatar.sequenceActionDesc")}
             >
               {REQUIRED_KINDS.map((kind) => (
                 <SequenceActionSlot
@@ -371,7 +375,7 @@ export const AvatarPanel: React.FC = () => {
                 onFiles={(files) => importSequenceAction("action", files, sequenceName)}
               />
             </ActionList>
-            <ConfigStatus ready={hasSequenceConfig(config)} label="序列帧生成" />
+            <ConfigStatus ready={hasSequenceConfig(config)} label={t("avatar.sequenceGeneration")} />
           </section>
         )}
       </div>
@@ -428,11 +432,19 @@ const SectionHeader: React.FC<{ title: string; description: string }> = ({ title
   </div>
 );
 
-const RequiredBadge: React.FC<{ required?: boolean }> = ({ required }) => (
-  required ? (
-    <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">必填</span>
-  ) : null
-);
+const useKindLabel = (kind: AvatarActionKind): string => {
+  const { t } = useI18n();
+  if (kind === "idle") return t("avatar.idle");
+  if (kind === "speaking") return t("avatar.speaking");
+  return t("avatar.manualAction");
+};
+
+const RequiredBadge: React.FC<{ required?: boolean }> = ({ required }) => {
+  const { t } = useI18n();
+  return required ? (
+    <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">{t("avatar.required")}</span>
+  ) : null;
+};
 
 const VideoActionSlot: React.FC<{
   kind: AvatarActionKind;
@@ -456,6 +468,8 @@ const VideoActionSlot: React.FC<{
   onRemoveBackground,
   processingId,
 }) => {
+  const { language, t } = useI18n();
+  const kindLabel = useKindLabel(kind);
   const inputId = `avatar-video-upload-${kind}`;
   const hasAssets = assets.length > 0;
   const pickFiles = () => {
@@ -475,7 +489,11 @@ const VideoActionSlot: React.FC<{
       data-avatar-selection-keep
     >
       <div className="flex items-center justify-between border-b border-border px-2 py-1.5 text-fg-2">
-        <span>{hasAssets ? `${KIND_LABELS[kind]}已绑定` : `添加${KIND_LABELS[kind]}`}</span>
+        <span>
+          {hasAssets
+            ? language === "zh" ? `${kindLabel}${t("avatar.bound")}` : `${kindLabel} ${t("avatar.bound")}`
+            : language === "zh" ? `${t("avatar.add")}${kindLabel}` : `${t("avatar.add")} ${kindLabel}`}
+        </span>
         <RequiredBadge required={required} />
       </div>
       {hasAssets ? (
@@ -539,6 +557,7 @@ const VideoAddActionCard: React.FC<{
   disabled: boolean;
   onFiles: (kind: AvatarActionKind, files: File[] | FileList | null) => void;
 }> = ({ onFiles }) => {
+  const { t } = useI18n();
   const inputId = "avatar-video-upload-custom-action";
   const pickFiles = () => {
     console.info("[Avatar] video action picker open", { kind: "action", inputId });
@@ -551,7 +570,7 @@ const VideoAddActionCard: React.FC<{
   return (
     <div className="flex min-h-[142px] flex-col overflow-hidden rounded-lg border border-dashed border-border bg-bg text-xs hover:border-accent">
       <div className="flex items-center justify-between border-b border-border px-2 py-1.5 text-fg-2">
-        <span>添加手动动作</span>
+        <span>{t("avatar.addManualAction")}</span>
         <Plus className="h-3.5 w-3.5" />
       </div>
       <UploadLabel onPick={pickFiles} />
@@ -566,7 +585,10 @@ const VideoThumbButton: React.FC<{
   onDelete: () => void;
   onRemoveBackground: () => void;
   processing: boolean;
-}> = ({ asset, selected, onSelect, onDelete, onRemoveBackground, processing }) => (
+}> = ({ asset, selected, onSelect, onDelete, onRemoveBackground, processing }) => {
+  const kindLabel = useKindLabel(asset.kind);
+  const { t } = useI18n();
+  return (
   <div
     role="button"
     tabIndex={0}
@@ -583,7 +605,7 @@ const VideoThumbButton: React.FC<{
     <AvatarThumbnail mediaId={asset.mediaId} className="h-full min-h-[86px] border-0" />
     <div className="absolute inset-x-0 bottom-0 bg-black/65 px-2 py-1.5">
       <div className="truncate text-[11px] text-white">
-        {KIND_LABELS[asset.kind]} · {asset.name}
+        {kindLabel} · {asset.name}
       </div>
     </div>
     {ENABLE_BACKGROUND_REMOVAL && (
@@ -592,9 +614,10 @@ const VideoThumbButton: React.FC<{
         onClick={onRemoveBackground}
       />
     )}
-    <DeleteButton title="删除动作视频" onDelete={onDelete} />
+    <DeleteButton title={t("avatar.deleteVideo")} onDelete={onDelete} />
   </div>
-);
+  );
+};
 
 const SequenceActionSlot: React.FC<{
   kind: AvatarActionKind;
@@ -631,6 +654,8 @@ const SequenceActionSlot: React.FC<{
   onDragFrame,
   onReorderFrame,
 }) => {
+  const { t } = useI18n();
+  const kindLabel = useKindLabel(kind);
   const inputId = action ? `avatar-sequence-add-${action.id}` : `avatar-sequence-create-${kind}`;
   const inputRef = useRef<HTMLInputElement | null>(null);
   const selected = action ? selectedId === action.id : false;
@@ -653,7 +678,7 @@ const SequenceActionSlot: React.FC<{
     >
       <div className="flex items-center gap-2 border-b border-border px-2 py-1.5">
         {required || !action ? (
-          <div className="min-w-0 flex-1 truncate text-fg-2">{KIND_LABELS[kind]}</div>
+          <div className="min-w-0 flex-1 truncate text-fg-2">{kindLabel}</div>
         ) : (
           <input
             value={action.name}
@@ -666,7 +691,7 @@ const SequenceActionSlot: React.FC<{
         {action && !required && (
           <button
             className="rounded p-1 text-fg-muted hover:bg-bg-2 hover:text-status-error"
-            title="删除动作"
+            title={t("avatar.deleteAction")}
             onClick={(event) => {
               event.stopPropagation();
               onDeleteAction(action.id);
@@ -707,7 +732,7 @@ const SequenceActionSlot: React.FC<{
             </label>
           </div>
           <div className="text-[10px] text-fg-muted">
-            {action.frames.length} 帧 · {action.frameDurationSec}s/图
+            {action.frames.length} {t("avatar.frames")} · {action.frameDurationSec}s/{t("avatar.perImage")}
           </div>
         </div>
       ) : (
@@ -760,7 +785,9 @@ const FrameCard: React.FC<{
   onDelete,
   onRemoveBackground,
   processing,
-}) => (
+}) => {
+  const { t } = useI18n();
+  return (
   <div
     draggable
     className={`group relative aspect-square overflow-hidden rounded border bg-bg-2 ${
@@ -792,9 +819,10 @@ const FrameCard: React.FC<{
     {ENABLE_BACKGROUND_REMOVAL && (
       <RemoveBackgroundButton processing={processing} onClick={onRemoveBackground} compact />
     )}
-    <DeleteButton title="删除序列帧" onDelete={onDelete} />
+    <DeleteButton title={t("avatar.deleteFrame")} onDelete={onDelete} />
   </div>
-);
+  );
+};
 
 const SequenceAddActionCard: React.FC<{
   name: string;
@@ -802,11 +830,12 @@ const SequenceAddActionCard: React.FC<{
   onNameChange: (name: string) => void;
   onFiles: (files: FileList | null) => void;
 }> = ({ name, disabled, onNameChange, onFiles }) => {
+  const { t } = useI18n();
   const inputId = "avatar-sequence-create-custom-action";
   return (
     <div className="rounded-lg border border-dashed border-border bg-bg p-2 text-xs hover:border-accent">
       <label className="mb-2 block text-fg-muted">
-        新增动作名称
+        {t("avatar.newActionName")}
         <input
           value={name}
           onChange={(event) => onNameChange(event.target.value)}
@@ -818,7 +847,7 @@ const SequenceAddActionCard: React.FC<{
         className="flex cursor-pointer items-center justify-center gap-2 rounded border border-dashed border-border px-3 py-3 text-fg-2 hover:border-accent hover:text-accent"
       >
         <Upload className="h-4 w-4" />
-        导入该动作的序列帧
+        {t("avatar.importSequenceFrames")}
       </label>
       <input
         id={inputId}
@@ -1028,14 +1057,16 @@ const RemoveBackgroundButton: React.FC<{
   processing: boolean;
   compact?: boolean;
   onClick: () => void;
-}> = ({ processing, compact, onClick }) => (
+}> = ({ processing, compact, onClick }) => {
+  const { t } = useI18n();
+  return (
   <span
     role="button"
     tabIndex={0}
     className={`absolute left-1.5 top-1.5 z-10 inline-flex items-center justify-center gap-1 rounded bg-black/70 text-white opacity-0 transition hover:bg-accent group-hover:opacity-100 ${
       compact ? "h-6 w-6" : "h-6 px-2 text-[10px]"
     }`}
-    title="生成透明背景素材"
+    title={t("avatar.transparentReady")}
     onClick={(event) => {
       event.stopPropagation();
       if (!processing) onClick();
@@ -1048,14 +1079,18 @@ const RemoveBackgroundButton: React.FC<{
     }}
   >
     <Eraser className={`h-3.5 w-3.5 ${processing ? "animate-pulse" : ""}`} />
-    {!compact && <span>{processing ? "处理中" : "去背景"}</span>}
+    {!compact && <span>{processing ? t("assets.generating") : t("avatar.prepareRemoveBg")}</span>}
   </span>
-);
+  );
+};
 
-const ConfigStatus: React.FC<{ ready: boolean; label: string }> = ({ ready, label }) => (
-  <div className={`rounded px-2 py-1 text-xs ${ready ? "bg-status-success/10 text-status-success" : "bg-bg text-fg-muted"}`}>
-    {ready ? `${label}已就绪` : `${label}需要同时配置静止和说话素材`}
-  </div>
-);
+const ConfigStatus: React.FC<{ ready: boolean; label: string }> = ({ ready, label }) => {
+  const { t } = useI18n();
+  return (
+    <div className={`rounded px-2 py-1 text-xs ${ready ? "bg-status-success/10 text-status-success" : "bg-bg text-fg-muted"}`}>
+      {label} · {ready ? t("avatar.ready") : t("avatar.notReady")}
+    </div>
+  );
+};
 
 export default AvatarPanel;

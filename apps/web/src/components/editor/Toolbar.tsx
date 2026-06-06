@@ -16,6 +16,7 @@ import {
   Redo2,
   Upload,
   MoreHorizontal,
+  Languages,
 } from "lucide-react";
 import { useProjectStore } from "../../stores/project-store";
 import { useUIStore } from "../../stores/ui-store";
@@ -45,6 +46,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@openreel/ui";
+import { useI18n } from "../../i18n";
 
 type ExportType =
   | "mp4"
@@ -68,6 +70,7 @@ interface ExportState {
 }
 
 export const Toolbar: React.FC = () => {
+  const { language, setLanguage, t } = useI18n();
   const { project, undo, redo, renameProject } = useProjectStore();
   const {
     selectedItems,
@@ -191,12 +194,12 @@ export const Toolbar: React.FC = () => {
         setExportState((prev) => ({
           ...prev,
           progress: value.progress * 100,
-          phase: value.phase === "complete" ? "Complete!" : `${value.phase}...`,
+          phase: value.phase === "complete" ? t("toolbar.saved") : `${value.phase}...`,
         }));
       }
 
       if (finalResult?.success) {
-        setExportState((prev) => ({ ...prev, complete: true, phase: "Saved!" }));
+        setExportState((prev) => ({ ...prev, complete: true, phase: t("toolbar.saved") }));
         track(AnalyticsEvents.PROJECT_EXPORTED, {
           format: videoSettings.format ?? "mp4",
           codec: videoSettings.codec ?? "h264",
@@ -206,10 +209,10 @@ export const Toolbar: React.FC = () => {
           duration: project.timeline?.duration ?? 0,
         });
       } else {
-        throw new Error(finalResult?.error?.message || "Export failed");
+        throw new Error(finalResult?.error?.message || t("avatar.generateFailed"));
       }
     },
-    [project, track],
+    [project, track, t],
   );
 
   const showSavePicker = useCallback(async (filename: string, ext: string): Promise<FileSystemWritableFileStream> => {
@@ -227,7 +230,7 @@ export const Toolbar: React.FC = () => {
       }).showSaveFilePicker({
         suggestedName: filename,
         types: [{
-          description: "Media file",
+          description: t("toolbar.mediaFile"),
           accept: { [mime]: [`.${ext}`] },
         }],
       });
@@ -291,7 +294,7 @@ export const Toolbar: React.FC = () => {
         return Promise.resolve();
       },
     } as unknown as FileSystemWritableFileStream;
-  }, []);
+  }, [t]);
 
   const handleExport = useCallback(
     async (type: ExportType) => {
@@ -304,7 +307,7 @@ export const Toolbar: React.FC = () => {
           setExportState({
             isExporting: true,
             progress: 0,
-            phase: "Initializing...",
+            phase: t("engine.starting"),
             error: null,
             complete: false,
           });
@@ -331,7 +334,7 @@ export const Toolbar: React.FC = () => {
             setExportState((prev) => ({
               ...prev,
               progress: value.progress * 100,
-              phase: value.phase === "complete" ? "Complete!" : `${value.phase}...`,
+              phase: value.phase === "complete" ? t("toolbar.saved") : `${value.phase}...`,
             }));
           }
 
@@ -348,14 +351,14 @@ export const Toolbar: React.FC = () => {
               document.body.removeChild(a);
               URL.revokeObjectURL(url);
             }
-            setExportState((prev) => ({ ...prev, complete: true, phase: "Saved!" }));
+            setExportState((prev) => ({ ...prev, complete: true, phase: t("toolbar.saved") }));
             track(AnalyticsEvents.PROJECT_EXPORTED, {
               format: "wav",
               duration: project.timeline?.duration ?? 0,
             });
           } else {
             try { await writable.abort(); } catch {}
-            throw new Error(finalResult?.error?.message || "Export failed");
+            throw new Error(finalResult?.error?.message || t("avatar.generateFailed"));
           }
         } else {
           const base = {
@@ -383,7 +386,7 @@ export const Toolbar: React.FC = () => {
           setExportState({
             isExporting: true,
             progress: 0,
-            phase: "Initializing...",
+            phase: t("engine.starting"),
             error: null,
             complete: false,
           });
@@ -401,11 +404,11 @@ export const Toolbar: React.FC = () => {
         setExportState((prev) => ({
           ...prev,
           isExporting: false,
-          error: error instanceof Error ? error.message : "Export failed",
+          error: error instanceof Error ? error.message : t("avatar.generateFailed"),
         }));
       }
     },
-    [project, track, runExport, showSavePicker],
+    [project, track, runExport, showSavePicker, t],
   );
 
   const handleCancelExport = useCallback(() => {
@@ -431,7 +434,7 @@ export const Toolbar: React.FC = () => {
         setExportState({
           isExporting: true,
           progress: 0,
-          phase: "Initializing...",
+          phase: t("engine.starting"),
           error: null,
           complete: false,
         });
@@ -471,11 +474,11 @@ export const Toolbar: React.FC = () => {
         setExportState((prev) => ({
           ...prev,
           isExporting: false,
-          error: error instanceof Error ? error.message : "Export failed",
+          error: error instanceof Error ? error.message : t("avatar.generateFailed"),
         }));
       }
     },
-    [project, track, runExport, showSavePicker],
+    [project, track, runExport, showSavePicker, t],
   );
 
   const projectRes = `${project.settings.width}×${project.settings.height}`;
@@ -491,9 +494,9 @@ export const Toolbar: React.FC = () => {
     separator?: boolean;
   }> = [
     {
-      label: "MP4 Standard",
+      label: t("export.mp4Standard"),
       icon: Zap,
-      desc: `${projectRes} H.264 - Web & social`,
+      desc: `${projectRes} ${t("export.mp4StandardDesc")}`,
       type: "mp4",
       recommended: true,
     },
@@ -508,28 +511,28 @@ export const Toolbar: React.FC = () => {
       ? []
       : [
           {
-            label: "4K Standard",
+            label: t("export.4kStandard"),
             icon: FileVideo,
-            desc: "3840×2160 - YouTube 4K",
+            desc: t("export.4kStandardDesc"),
             type: "4k" as ExportType,
           },
         ]),
     {
-      label: "1080p High Quality",
+      label: t("export.1080pHigh"),
       icon: FileVideo,
-      desc: "1920×1080 30fps - High bitrate",
+      desc: t("export.1080pHighDesc"),
       type: "1080p-high",
     },
     {
-      label: "1080p 60fps",
+      label: t("export.1080p60"),
       icon: FileVideo,
-      desc: "1920×1080 - Smooth playback",
+      desc: t("export.1080p60Desc"),
       type: "1080p-60",
     },
     {
-      label: "Audio Only (WAV)",
+      label: t("export.audioOnly"),
       icon: Music,
-      desc: "Uncompressed audio",
+      desc: t("export.audioOnlyDesc"),
       type: "wav",
     },
   ];
@@ -541,7 +544,7 @@ export const Toolbar: React.FC = () => {
         <button
           onClick={() => navigate("welcome")}
           className="flex items-center gap-1.5 pr-1.5"
-          title="Back to home"
+          title={t("toolbar.backHome")}
         >
           <span className="w-[11px] h-[11px] rounded-full bg-[oklch(0.7_0.18_25)]" />
           <span className="w-[11px] h-[11px] rounded-full bg-[oklch(0.78_0.14_80)]" />
@@ -551,8 +554,8 @@ export const Toolbar: React.FC = () => {
         <span className="text-[11px] text-fg-3 flex items-center gap-1.5">
           <span className="w-[5px] h-[5px] rounded-full bg-accent" />
           {exportState.isExporting
-            ? `Exporting… ${Math.round(exportState.progress)}%`
-            : `Auto saved: ${autosaveLabel}`}
+            ? `${t("toolbar.exporting")}... ${Math.round(exportState.progress)}%`
+            : `${t("toolbar.autoSaved")}: ${autosaveLabel}`}
         </span>
       </div>
 
@@ -588,7 +591,7 @@ export const Toolbar: React.FC = () => {
               <Undo2 size={14} />
             </button>
           </TooltipTrigger>
-          <TooltipContent>Undo (⌘Z)</TooltipContent>
+          <TooltipContent>{t("toolbar.undo")}</TooltipContent>
         </Tooltip>
 
         <Tooltip>
@@ -600,7 +603,7 @@ export const Toolbar: React.FC = () => {
               <Redo2 size={14} />
             </button>
           </TooltipTrigger>
-          <TooltipContent>Redo (⇧⌘Z)</TooltipContent>
+          <TooltipContent>{t("toolbar.redo")}</TooltipContent>
         </Tooltip>
 
         <div className="w-px h-4 bg-border mx-1" />
@@ -619,7 +622,21 @@ export const Toolbar: React.FC = () => {
               <History size={14} />
             </button>
           </TooltipTrigger>
-          <TooltipContent>Action history</TooltipContent>
+          <TooltipContent>{t("toolbar.history")}</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => setLanguage(language === "zh" ? "en" : "zh")}
+              className="inline-flex h-[26px] items-center gap-1 rounded-md px-2 text-[11px] font-medium text-fg-2 hover:bg-hover hover:text-fg transition-colors"
+              title={t("toolbar.language")}
+            >
+              <Languages size={14} />
+              <span>{language === "zh" ? "中" : "EN"}</span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{t("toolbar.language")}</TooltipContent>
         </Tooltip>
 
         <Tooltip>
@@ -631,7 +648,7 @@ export const Toolbar: React.FC = () => {
               {isDark ? <Moon size={14} /> : <Sun size={14} />}
             </button>
           </TooltipTrigger>
-          <TooltipContent>{isDark ? "切换到亮色模式" : "切换到暗色模式"}</TooltipContent>
+          <TooltipContent>{isDark ? t("toolbar.lightMode") : t("toolbar.darkMode")}</TooltipContent>
         </Tooltip>
 
         <div className="w-px h-4 bg-border mx-1" />
@@ -661,7 +678,7 @@ export const Toolbar: React.FC = () => {
         ) : exportState.complete ? (
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-accent-soft text-accent text-[12.5px]">
             <Check size={13} />
-            <span className="font-medium">Saved!</span>
+            <span className="font-medium">{t("toolbar.saved")}</span>
           </div>
         ) : (
           <DropdownMenu open={isExportOpen} onOpenChange={setIsExportOpen}>
@@ -670,7 +687,7 @@ export const Toolbar: React.FC = () => {
                 className="relative inline-flex items-center gap-1.5 px-3.5 py-[5px] rounded-md bg-accent text-accent-fg font-semibold text-[12.5px] shadow-glow hover:bg-accent-strong transition-colors"
               >
                 <Upload size={13} />
-                <span>Export</span>
+                <span>{t("toolbar.export")}</span>
                 <ChevronDown size={12} className={`transition-transform ${isExportOpen ? "rotate-180" : ""}`} />
               </button>
             </DropdownMenuTrigger>
@@ -705,7 +722,7 @@ export const Toolbar: React.FC = () => {
                           {option.label}
                           {option.recommended && (
                             <span className="ml-2 text-[10px] bg-accent-soft text-accent px-1.5 py-0.5 rounded">
-                              Best match
+                              {t("toolbar.bestMatch")}
                             </span>
                           )}
                         </div>
@@ -714,7 +731,7 @@ export const Toolbar: React.FC = () => {
                         </div>
                         {exportEstimates.get(option.type) && (
                           <div className="text-[10px] text-fg-3 mt-1">
-                            Est. {exportEstimates.get(option.type)?.formatted}
+                            {t("toolbar.estimated")} {exportEstimates.get(option.type)?.formatted}
                           </div>
                         )}
                       </div>
@@ -732,10 +749,10 @@ export const Toolbar: React.FC = () => {
                   </div>
                   <div className="flex-1">
                     <div className="text-sm font-medium text-accent">
-                      Custom export…
+                      {t("toolbar.customExport")}
                     </div>
                     <div className="text-xs text-fg-muted mt-0.5">
-                      Full settings with AI upscaling
+                      {t("toolbar.customExportDesc")}
                     </div>
                   </div>
                   <MoreHorizontal size={14} className="text-fg-muted" />
@@ -768,7 +785,7 @@ export const Toolbar: React.FC = () => {
           />
           <div className="fixed top-topbar right-0 bottom-0 w-80 bg-bg-1 border-l border-border z-50 shadow-lg animate-in slide-in-from-right duration-200">
             <div className="flex items-center justify-between p-3 border-b border-border">
-              <span className="text-sm font-medium text-fg">Action history</span>
+              <span className="text-sm font-medium text-fg">{t("toolbar.actionHistory")}</span>
               <button
                 onClick={() => setIsHistoryOpen(false)}
                 className="p-1.5 rounded hover:bg-hover text-fg-3 hover:text-fg transition-colors"

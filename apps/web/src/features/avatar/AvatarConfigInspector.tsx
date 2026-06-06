@@ -10,13 +10,13 @@ import {
 import { useAvatarSelectionStore } from "./avatar-selection-store";
 import { useAvatarAlignmentStore } from "./avatar-alignment-store";
 import {
-  AVATAR_KIND_LABELS,
   detectSubjectBox,
   itemKey,
   sequenceItemToConfig,
   subjectCenterOnCanvas,
   videoItemToConfig,
 } from "./AvatarConfigStageOverlay";
+import { useI18n } from "../../i18n";
 
 const numberOrZero = (value: string): number => {
   const parsed = Number(value);
@@ -26,6 +26,7 @@ const numberOrZero = (value: string): number => {
 export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> = ({
   mode = "transform",
 }) => {
+  const { t } = useI18n();
   const project = useProjectStore((state) => state.project);
   const selectedConfig = useAvatarSelectionStore((state) => state.selectedConfig);
   const referenceKey = useAvatarAlignmentStore((state) => state.referenceKey);
@@ -91,6 +92,11 @@ export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> =
 
   if (!selectedConfig || !selectedItem) return null;
 
+  const kindText = (kind: string) => {
+    if (kind === "idle") return t("avatar.idle");
+    if (kind === "speaking") return t("avatar.speaking");
+    return t("avatar.manualAction");
+  };
   const transform = selectedItem.transform;
   const updateTransform = (nextTransform: Transform) => {
     if (selectedConfig.source === "video") {
@@ -110,7 +116,7 @@ export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> =
       scale: { ...referenceItem.transform.scale },
       rotation: referenceItem.transform.rotation,
     });
-    setAlignMessage("已套用参考动作的变换");
+    setAlignMessage(t("avatar.alignApplied"));
   };
   const autoAlignSubject = async () => {
     if (!referenceItem || !media || !referenceMedia) return;
@@ -122,7 +128,7 @@ export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> =
         detectSubjectBox(referenceMedia),
       ]);
       if (!currentBox || !referenceBox) {
-        setAlignMessage("没有识别到清晰的人物主体");
+        setAlignMessage(t("avatar.noSubject"));
         return;
       }
 
@@ -153,10 +159,10 @@ export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> =
         },
         scale: { x: nextScale, y: nextScale },
       });
-      setAlignMessage("已按人物主体框自动对齐");
+      setAlignMessage(t("avatar.autoAlignApplied"));
     } catch (error) {
       console.warn("[avatar] Auto align failed", error);
-      setAlignMessage("自动对齐失败，请用洋葱皮手动微调");
+      setAlignMessage(t("avatar.autoAlignFailed"));
     } finally {
       setIsAligning(false);
     }
@@ -172,21 +178,21 @@ export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> =
         <div className="rounded-lg border border-border bg-bg-2 p-3">
           <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-fg">
             <Crosshair className="h-4 w-4 text-accent" />
-            动作对齐
+            {t("avatar.align")}
           </div>
           <label className="mb-3 block text-xs text-fg-muted">
-            参考动作
+            {t("avatar.referenceAction")}
             <select
               value={referenceKey}
               onChange={(event) => setReferenceKey(event.target.value)}
               className="mt-1 w-full rounded border border-border bg-bg px-2 py-1.5 text-fg"
             >
               {referenceItems.length === 0 ? (
-                <option value="">暂无可用参考</option>
+                <option value="">{t("avatar.noReference")}</option>
               ) : (
                 referenceItems.map((item) => (
                   <option key={itemKey(item)} value={itemKey(item)}>
-                    {AVATAR_KIND_LABELS[item.kind]} · {item.name}
+                    {kindText(item.kind)} · {item.name}
                   </option>
                 ))
               )}
@@ -201,7 +207,7 @@ export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> =
                 onChange={(event) => setShowOnionSkin(event.target.checked)}
               />
               <Eye className="h-3.5 w-3.5" />
-              洋葱皮
+              {t("avatar.onionSkin")}
             </label>
             <input
               type="range"
@@ -222,7 +228,7 @@ export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> =
               disabled={!referenceItem}
               onClick={applyReferenceTransform}
             >
-              套用变换
+              {t("avatar.applyTransform")}
             </button>
             <button
               className="inline-flex items-center justify-center gap-1 rounded bg-accent px-2 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
@@ -230,7 +236,7 @@ export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> =
               onClick={() => void autoAlignSubject()}
             >
               <Wand2 className="h-3.5 w-3.5" />
-              {isAligning ? "对齐中" : "自动对齐"}
+              {isAligning ? t("avatar.aligning") : t("avatar.autoAlign")}
             </button>
           </div>
           {alignMessage && (
@@ -240,7 +246,7 @@ export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> =
         ) : (
           <>
             <div className="mb-4 rounded-lg border border-border bg-bg-2 p-3">
-              <div className="text-xs text-fg-muted">当前动作</div>
+              <div className="text-xs text-fg-muted">{t("avatar.currentAction")}</div>
               <div className="mt-1 truncate text-sm font-medium">{selectedItem.name}</div>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -255,24 +261,24 @@ export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> =
                 onChange={(value) => patchTransform({ position: { ...transform.position, y: value } })}
               />
               <NumberField
-                label="宽度缩放"
+                label={t("avatar.widthScale")}
                 step={0.05}
                 value={transform.scale.x}
                 onChange={(value) => patchTransform({ scale: { ...transform.scale, x: value } })}
               />
               <NumberField
-                label="高度缩放"
+                label={t("avatar.heightScale")}
                 step={0.05}
                 value={transform.scale.y}
                 onChange={(value) => patchTransform({ scale: { ...transform.scale, y: value } })}
               />
               <NumberField
-                label="旋转"
+                label={t("avatar.rotation")}
                 value={transform.rotation}
                 onChange={(value) => patchTransform({ rotation: value })}
               />
               <NumberField
-                label="透明度"
+                label={t("avatar.opacity")}
                 min={0}
                 max={1}
                 step={0.05}

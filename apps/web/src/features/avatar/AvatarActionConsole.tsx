@@ -12,12 +12,14 @@ import type {
   AvatarVideoAsset,
 } from "./avatar-types";
 import { AvatarThumbnail } from "./AvatarThumbnail";
+import { useI18n } from "../../i18n";
 
 export const isAvatarGeneratedClip = (clip: Clip | null | undefined): clip is Clip => {
   return clip?.metadata?.kind === "avatar-generated";
 };
 
 export const AvatarActionConsole: React.FC<{ clip?: Clip | null }> = ({ clip }) => {
+  const { t } = useI18n();
   const project = useProjectStore((state) => state.project);
   const config = useMemo(() => getAvatarConfig(project), [project]);
   const actions = useMemo(() => getAvatarActions(config), [config]);
@@ -28,7 +30,7 @@ export const AvatarActionConsole: React.FC<{ clip?: Clip | null }> = ({ clip }) 
 
   const runAction = async (source: AvatarSource, actionId: string) => {
     if (!parentClip) {
-      toast.warning("请先生成一段角色动画", "动作覆盖需要依附在已生成的角色动画轨道上。");
+      toast.warning(t("avatar.noGeneratedClip"), t("avatar.noGeneratedClipDesc"));
       return;
     }
     const timeline = useTimelineStore.getState();
@@ -45,11 +47,11 @@ export const AvatarActionConsole: React.FC<{ clip?: Clip | null }> = ({ clip }) 
       await addAvatarActionOverlay(parentClip.id, source, actionId, {
         startTime: insertionTime,
       });
-      toast.success("已添加动作覆盖片段");
+      toast.success(t("avatar.overlayAdded"));
     } catch (error) {
       toast.error(
-        "添加动作失败",
-        error instanceof Error ? error.message : "未知错误",
+        t("avatar.overlayFailed"),
+        error instanceof Error ? error.message : "Unknown error",
       );
     } finally {
       setBusyActionId(null);
@@ -60,14 +62,14 @@ export const AvatarActionConsole: React.FC<{ clip?: Clip | null }> = ({ clip }) 
     <div className="h-full bg-bg-1 text-fg flex flex-col">
       <div className="flex-1 overflow-y-auto px-2 py-3 custom-scrollbar">
         <ActionGroup
-          title="视频动作"
+          title={t("avatar.videoActions")}
           source="video"
           actions={actions.video}
           busyActionId={busyActionId}
           onRun={runAction}
         />
         <ActionGroup
-          title="序列帧动作"
+          title={t("avatar.sequenceActions")}
           source="sequence"
           actions={actions.sequence}
           busyActionId={busyActionId}
@@ -84,11 +86,13 @@ const ActionGroup: React.FC<{
   actions: Array<AvatarVideoAsset | AvatarSequenceAction>;
   busyActionId: string | null;
   onRun: (source: AvatarSource, actionId: string) => Promise<void>;
-}> = ({ title, source, actions, busyActionId, onRun }) => (
+}> = ({ title, source, actions, busyActionId, onRun }) => {
+  const { t } = useI18n();
+  return (
   <section className="mb-3 rounded-lg border border-border bg-bg-2 px-2 py-2.5">
     <div className="mb-2 text-xs font-medium text-fg-2">{title}</div>
     {actions.length === 0 ? (
-      <p className="text-xs text-fg-muted">还没有配置动作。</p>
+      <p className="text-xs text-fg-muted">{t("avatar.noActions")}</p>
     ) : (
       <div className="grid grid-cols-2 gap-2">
         {actions.map((action) => (
@@ -120,7 +124,8 @@ const ActionGroup: React.FC<{
       </div>
     )}
   </section>
-);
+  );
+};
 
 export default AvatarActionConsole;
 

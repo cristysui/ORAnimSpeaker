@@ -61,20 +61,24 @@ import { AiTab } from "./inspector/tabs/AiTab";
 import { AvatarActionConsole } from "../../features/avatar/AvatarActionConsole";
 import { AvatarConfigInspector } from "../../features/avatar/AvatarConfigInspector";
 import { useAvatarSelectionStore } from "../../features/avatar/avatar-selection-store";
+import { useI18n } from "../../i18n";
 
 // Initialize engines as singletons
 const chromaKeyEngine = new ChromaKeyEngine({ width: 1920, height: 1080 });
 
 const Section = InspectorSection;
 
-const EmptyState: React.FC = () => (
-  <div className="flex-1 flex flex-col items-center justify-center p-8 text-center opacity-50">
-    <p className="text-sm text-text-secondary mb-2">No selection</p>
-    <p className="text-xs text-text-muted">
-      Select a clip to view its properties
-    </p>
-  </div>
-);
+const EmptyState: React.FC = () => {
+  const { t } = useI18n();
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center opacity-50">
+      <p className="text-sm text-text-secondary mb-2">{t("inspector.noSelection")}</p>
+      <p className="text-xs text-text-muted">
+        {t("inspector.noSelectionDesc")}
+      </p>
+    </div>
+  );
+};
 
 export const InspectorPanel: React.FC = () => {
   // Stores
