@@ -136,6 +136,27 @@ export class ExportFrameDecoder {
     return this.reusableCanvas;
   }
 
+  async getFramesAtTimestamps(
+    timestamps: number[],
+  ): Promise<Array<{ timestamp: number; canvas: OffscreenCanvas }>> {
+    if (!this.sink || timestamps.length === 0) return [];
+
+    const frames: Array<{ timestamp: number; canvas: OffscreenCanvas }> = [];
+    let index = 0;
+    for await (const result of this.sink.canvasesAtTimestamps(timestamps)) {
+      const timestamp = timestamps[index++];
+      if (!result) continue;
+
+      const clone = new OffscreenCanvas(result.canvas.width, result.canvas.height);
+      const ctx = clone.getContext("2d");
+      if (!ctx) continue;
+      ctx.drawImage(result.canvas, 0, 0);
+      frames.push({ timestamp, canvas: clone });
+    }
+
+    return frames;
+  }
+
   dispose(): void {
     if (this.input) {
       this.input[Symbol.dispose]?.();

@@ -2,7 +2,8 @@ import { create } from "zustand";
 
 export type AvatarConfigSelection =
   | { source: "video"; id: string }
-  | { source: "sequence"; id: string };
+  | { source: "sequence"; id: string }
+  | { source: "sequence-frame"; id: string; actionId: string };
 
 interface AvatarSelectionState {
   selectedConfig: AvatarConfigSelection | null;

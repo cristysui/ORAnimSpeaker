@@ -1,4 +1,5 @@
-import type { Project } from "../types/project";
+import type { MediaItem, Project } from "../types/project";
+import type { Clip, Track, Transform } from "../types/timeline";
 import type {
   VideoExportSettings,
   AudioExportSettings,
@@ -24,8 +25,37 @@ import { UpscalingEngine, getUpscalingEngine } from "../video/upscaling";
 import { getMediaEngine } from "../media/mediabunny-engine";
 import { getWavEncoder } from "../wasm/wav";
 
+type AvatarFastPathVisualTrack = {
+  track: Track;
+  originalIndex: number;
+  role: "background" | "avatar";
+};
+
+type AvatarFastPathPlan = {
+  tracks: AvatarFastPathVisualTrack[];
+  videoMediaIds: string[];
+  imageMediaIds: string[];
+};
+
+type DrawableFrame = ImageBitmap | OffscreenCanvas | HTMLCanvasElement;
+
+type FastPathVideoFrameCacheEntry = {
+  canvas: OffscreenCanvas;
+  lastAccessed: number;
+};
+
+type FastPathSequenceActionPlan = {
+  id: string;
+  frames: Array<{ mediaId: string; duration: number; transform?: Transform }>;
+  totalDuration: number;
+  transform: Transform;
+};
+
 export class ExportEngine {
   private static readonly AUDIO_EXPORT_CHUNK_DURATION_SECONDS = 15;
+  private static readonly ENABLE_AVATAR_FAST_PATH = true;
+  private static readonly FAST_PATH_VIDEO_CACHE_MAX = 240;
+  private static readonly FAST_PATH_PREFETCH_SECONDS = 1;
   private mediabunny: typeof import("mediabunny") | null = null;
   private initialized = false;
   private videoEngine: VideoEngine | null = null;
@@ -116,6 +146,112 @@ export class ExportEngine {
     if (!this.initialized || !this.mediabunny) {
       throw new Error("ExportEngine not initialized. Call initialize() first.");
     }
+  }
+
+  private getVideoEncoderProbeCodecs(codec: string): string[] {
+    const rawCodec = codec.trim();
+    const lowerCodec = rawCodec.toLowerCase();
+    const candidates = [rawCodec];
+
+    if (
+      lowerCodec === "avc" ||
+      lowerCodec.includes("avc") ||
+      lowerCodec.includes("h264")
+    ) {
+      candidates.push("avc1.640028", "avc1.4d401f", "avc1.42e01e");
+    }
+    if (lowerCodec === "vp9" || lowerCodec.includes("vp09")) {
+      candidates.push("vp09.00.10.08");
+    }
+    if (lowerCodec === "vp8" || lowerCodec.includes("vp8")) {
+      candidates.push("vp8");
+    }
+    if (lowerCodec === "av1" || lowerCodec.includes("av01")) {
+      candidates.push("av01.0.08M.08");
+    }
+
+    return [...new Set(candidates.filter(Boolean))];
+  }
+
+  private async probeVideoEncoderHardwareSupport(params: {
+    codec: string;
+    width: number;
+    height: number;
+    bitrate: number;
+    frameRate: number;
+  }): Promise<Record<string, unknown>> {
+    if (
+      typeof VideoEncoder === "undefined" ||
+      typeof VideoEncoder.isConfigSupported !== "function"
+    ) {
+      return {
+        webCodecs: false,
+        reason: "VideoEncoder.isConfigSupported unavailable",
+      };
+    }
+
+    const codecs = this.getVideoEncoderProbeCodecs(params.codec);
+    const hardwareHints = [
+      "prefer-hardware",
+      "no-preference",
+      "prefer-software",
+    ] as const;
+    const candidates: Array<Record<string, unknown>> = [];
+
+    for (const codec of codecs) {
+      for (const hardwareAcceleration of hardwareHints) {
+        try {
+          const support = await VideoEncoder.isConfigSupported({
+            codec,
+            width: params.width,
+            height: params.height,
+            bitrate: params.bitrate,
+            framerate: params.frameRate,
+            hardwareAcceleration,
+          });
+
+          candidates.push({
+            codec,
+            hardwareAcceleration,
+            supported: support.supported === true,
+            resolvedCodec: support.config?.codec,
+            resolvedHardwareAcceleration: support.config?.hardwareAcceleration,
+          });
+        } catch (error) {
+          candidates.push({
+            codec,
+            hardwareAcceleration,
+            supported: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+
+    return {
+      webCodecs: true,
+      requestedCodec: params.codec,
+      width: params.width,
+      height: params.height,
+      bitrate: params.bitrate,
+      frameRate: params.frameRate,
+      preferHardwareSupported: candidates.some(
+        (candidate) =>
+          candidate.hardwareAcceleration === "prefer-hardware" &&
+          candidate.supported === true,
+      ),
+      noPreferenceSupported: candidates.some(
+        (candidate) =>
+          candidate.hardwareAcceleration === "no-preference" &&
+          candidate.supported === true,
+      ),
+      preferSoftwareSupported: candidates.some(
+        (candidate) =>
+          candidate.hardwareAcceleration === "prefer-software" &&
+          candidate.supported === true,
+      ),
+      candidates,
+    };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -222,6 +358,13 @@ export class ExportEngine {
         : Math.random().toString(36).slice(2, 10);
     const exportStart = performance.now();
     let lastMark = exportStart;
+    const timings = {
+      renderMs: 0,
+      upscaleMs: 0,
+      encodeMs: 0,
+      idleMs: 0,
+      frames: 0,
+    };
     const logExport = (stage: string, details: Record<string, unknown> = {}) => {
       const now = performance.now();
       console.info(`[Export:${exportId}] ${stage}`, {
@@ -295,17 +438,6 @@ export class ExportEngine {
       codec: fullSettings.codec,
     });
 
-    await this.initializeGPUForExport(
-      fullSettings.width,
-      fullSettings.height,
-    );
-    logExport("gpu initialized");
-
-    this.videoEngine?.resetExportState();
-    if (this.videoEngine) {
-      this.videoEngine.exportMode = true;
-    }
-
     if (timelineDuration <= 0) {
       return {
         success: false,
@@ -329,6 +461,44 @@ export class ExportEngine {
     }
 
     const totalFrames = Math.ceil(timelineDuration * fullSettings.frameRate);
+    const fastPathPlan = ExportEngine.ENABLE_AVATAR_FAST_PATH
+      ? this.resolveAvatarFastPathPlan(project)
+      : null;
+    if (fastPathPlan) {
+      const sequenceActionMap = this.resolveFastPathSequenceActionMap(project);
+      logExport("avatar fast path selected", {
+        tracks: fastPathPlan.tracks.map(({ track, role }) => ({
+          name: track.name,
+          role,
+          clips: track.clips.length,
+        })),
+        videoMediaCount: fastPathPlan.videoMediaIds.length,
+        imageMediaCount: fastPathPlan.imageMediaIds.length,
+        sequenceActionCount: sequenceActionMap.size,
+      });
+      const fastResult = yield* this.exportAvatarFastPath(
+        project,
+        fullSettings,
+        writableStream,
+        totalFrames,
+        timelineDuration,
+        fastPathPlan,
+        sequenceActionMap,
+        logExport,
+      );
+      return fastResult;
+    }
+
+    await this.initializeGPUForExport(
+      fullSettings.width,
+      fullSettings.height,
+    );
+    logExport("gpu initialized");
+
+    this.videoEngine?.resetExportState();
+    if (this.videoEngine) {
+      this.videoEngine.exportMode = true;
+    }
     let bytesWritten = 0;
 
     try {
@@ -341,9 +511,8 @@ export class ExportEngine {
         Mp4OutputFormat,
         WebMOutputFormat,
         MovOutputFormat,
-        VideoSampleSource,
+        CanvasSource,
         AudioBufferSource,
-        VideoSample,
         getFirstEncodableVideoCodec,
         getFirstEncodableAudioCodec,
         QUALITY_MEDIUM,
@@ -401,18 +570,53 @@ export class ExportEngine {
         fullSettings.audioSettings,
         getFirstEncodableAudioCodec,
       );
+      const hardwareSupport = await this.probeVideoEncoderHardwareSupport({
+        codec: String(videoCodec),
+        width: fullSettings.width,
+        height: fullSettings.height,
+        bitrate: fullSettings.bitrate ? fullSettings.bitrate * 1000 : 8_000_000,
+        frameRate: fullSettings.frameRate,
+      });
+      logExport("video encoder support", hardwareSupport);
       logExport("codecs selected", {
         videoCodec,
         audioCodec: audioCodecResult.codec,
         audioBitrate: audioCodecResult.bitrate,
       });
 
-      const videoSource = new VideoSampleSource({
+      const exportCanvas = new OffscreenCanvas(
+        fullSettings.width,
+        fullSettings.height,
+      );
+      const exportCtx = exportCanvas.getContext("2d", {
+        alpha: fullSettings.format === "webm",
+      }) as OffscreenCanvasRenderingContext2D | null;
+      if (!exportCtx) {
+        throw this.createError(
+          "FRAME_ENCODE_FAILED",
+          "Could not create export canvas context",
+          "preparing",
+        );
+      }
+      exportCtx.imageSmoothingEnabled = true;
+      exportCtx.imageSmoothingQuality = "high";
+
+      const videoSource = new CanvasSource(exportCanvas, {
         codec: videoCodec,
         bitrate: fullSettings.bitrate ? fullSettings.bitrate * 1000 : QUALITY_MEDIUM,
         keyFrameInterval:
           fullSettings.keyframeInterval / fullSettings.frameRate,
-        hardwareAcceleration: "prefer-software",
+        hardwareAcceleration: "prefer-hardware",
+        onEncoderConfig: (config) => {
+          logExport("video encoder config", {
+            codec: config.codec,
+            width: config.width,
+            height: config.height,
+            bitrate: config.bitrate,
+            framerate: config.framerate,
+            hardwareAcceleration: config.hardwareAcceleration,
+          });
+        },
       });
       const audioSource = new AudioBufferSource({
         codec: audioCodecResult.codec as "aac" | "opus" | "mp3",
@@ -460,6 +664,9 @@ export class ExportEngine {
       }
       logExport("video decoders prepared", { videoMediaCount: videoMediaIds.length });
 
+      const logFrameWindow = Math.max(1, fullSettings.frameRate * 5);
+      const yieldFrameWindow = Math.max(1, fullSettings.frameRate);
+
       for (let frame = 0; frame < totalFrames; frame++) {
         if (this.abortController.signal.aborted) {
           throw this.createError(
@@ -473,12 +680,14 @@ export class ExportEngine {
         if (frame === 0) {
           logExport("first frame render start", { time });
         }
+        const renderStart = performance.now();
         const rendered = await this.videoEngine!.renderFrame(
           project,
           time,
           fullSettings.width,
           fullSettings.height,
         );
+        timings.renderMs += performance.now() - renderStart;
         if (frame === 0) {
           logExport("first frame render complete");
         }
@@ -486,46 +695,57 @@ export class ExportEngine {
         let frameImage = rendered.image;
 
         if (shouldUpscale && this.upscalingEngine?.isInitialized()) {
+          const upscaleStart = performance.now();
           const upscaled = await this.upscalingEngine.upscaleImageBitmap(
             frameImage,
             fullSettings.width,
             fullSettings.height,
             fullSettings.upscaling!,
           );
+          timings.upscaleMs += performance.now() - upscaleStart;
           frameImage.close();
           frameImage = upscaled;
         }
 
-        const videoSample = new VideoSample(frameImage, {
-          timestamp: time,
-          duration: 1 / fullSettings.frameRate,
-        });
+        exportCtx.clearRect(0, 0, fullSettings.width, fullSettings.height);
+        exportCtx.drawImage(frameImage, 0, 0, fullSettings.width, fullSettings.height);
 
         if (frame === 0) {
           logExport("first frame encode start");
         }
-        await videoSource.add(videoSample);
+        const encodeStart = performance.now();
+        await videoSource.add(time, 1 / fullSettings.frameRate);
+        timings.encodeMs += performance.now() - encodeStart;
         if (frame === 0) {
           logExport("first frame encode complete");
         }
-        videoSample.close();
         frameImage.close();
 
         this.currentExport!.framesRendered = frame + 1;
+        timings.frames = frame + 1;
 
-        if ((frame + 1) % 5 === 0) {
-          this.videoEngine?.clearVideoElementCache();
-          this.videoEngine?.clearCache();
-          try {
-            mediaEngine.clearFrameCache();
-          } catch {}
-          await new Promise((resolve) => setTimeout(resolve, 2));
+        if ((frame + 1) % yieldFrameWindow === 0) {
+          const idleStart = performance.now();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          timings.idleMs += performance.now() - idleStart;
         }
-        if ((frame + 1) % Math.max(1, fullSettings.frameRate * 5) === 0) {
+        if ((frame + 1) % logFrameWindow === 0) {
+          const videoCacheStats = this.videoEngine?.getCacheStats();
           logExport("render progress", {
             frame: frame + 1,
             totalFrames,
             bytesWritten,
+            avgRenderMs: Math.round(timings.renderMs / timings.frames),
+            avgEncodeMs: Math.round(timings.encodeMs / timings.frames),
+            avgUpscaleMs: timings.upscaleMs > 0
+              ? Math.round(timings.upscaleMs / timings.frames)
+              : 0,
+            idleMs: Math.round(timings.idleMs),
+            frameCacheEntries: videoCacheStats?.entries,
+            frameCacheMB: videoCacheStats
+              ? Math.round(videoCacheStats.sizeBytes / 1024 / 1024)
+              : undefined,
+            mediaFrameCacheEntries: mediaEngine.getFrameCacheSize(),
           });
         }
 
@@ -539,7 +759,14 @@ export class ExportEngine {
       }
 
       videoSource.close();
-      logExport("video source closed", { bytesWritten });
+      logExport("video source closed", {
+        bytesWritten,
+        frames: timings.frames,
+        renderMs: Math.round(timings.renderMs),
+        encodeMs: Math.round(timings.encodeMs),
+        upscaleMs: Math.round(timings.upscaleMs),
+        idleMs: Math.round(timings.idleMs),
+      });
       mediaEngine.disposeAllExportDecoders();
       mediaEngine.clearFrameCache();
       this.videoEngine?.clearVideoElementCache();
@@ -613,6 +840,884 @@ export class ExportEngine {
       this.exportWorker.terminate();
       this.exportWorker = null;
     }
+  }
+
+  private resolveAvatarFastPathPlan(project: Project): AvatarFastPathPlan | null {
+    if (project.timeline.subtitles?.length) return null;
+    if (project.textClips?.length || project.shapeClips?.length || project.svgClips?.length || project.stickerClips?.length) {
+      return null;
+    }
+
+    const mediaById = new Map(project.mediaLibrary.items.map((item) => [item.id, item]));
+    const tracks: AvatarFastPathVisualTrack[] = [];
+    const videoMediaIds = new Set<string>();
+    const imageMediaIds = new Set<string>();
+    let hasAvatarClip = false;
+
+    for (let originalIndex = 0; originalIndex < project.timeline.tracks.length; originalIndex++) {
+      const track = project.timeline.tracks[originalIndex];
+      if (track.hidden || track.clips.length === 0) continue;
+
+      if (track.type === "audio") continue;
+      if (track.type === "text" || track.type === "graphics") return null;
+      if (track.transitions?.length) return null;
+      if (track.type !== "video" && track.type !== "image") return null;
+
+      const isAvatarTrack = track.clips.some((clip) => this.isAvatarFastPathClip(clip));
+      const isBackgroundTrack = this.isFastPathBackgroundTrack(track);
+
+      if (!isAvatarTrack && !isBackgroundTrack) return null;
+
+      for (const clip of track.clips) {
+        if (!this.isStaticFastPathClip(clip)) return null;
+        const media = mediaById.get(clip.mediaId);
+        if (!media?.blob) return null;
+        if (media.type !== "video" && media.type !== "image") return null;
+        if (media.type === "video") videoMediaIds.add(media.id);
+        if (media.type === "image") imageMediaIds.add(media.id);
+        if (this.isAvatarFastPathClip(clip)) hasAvatarClip = true;
+      }
+
+      tracks.push({
+        track,
+        originalIndex,
+        role: isAvatarTrack ? "avatar" : "background",
+      });
+    }
+
+    if (!hasAvatarClip || tracks.length === 0) return null;
+
+    return {
+      tracks: tracks.sort((a, b) => b.originalIndex - a.originalIndex),
+      videoMediaIds: Array.from(videoMediaIds),
+      imageMediaIds: Array.from(imageMediaIds),
+    };
+  }
+
+  private isAvatarFastPathClip(clip: Clip): boolean {
+    const kind = clip.metadata?.kind;
+    return kind === "avatar-generated" || kind === "avatar-action-overlay";
+  }
+
+  private isFastPathBackgroundTrack(track: Track): boolean {
+    return track.name.trim().toLowerCase() === "background";
+  }
+
+  private isStaticFastPathClip(clip: Clip): boolean {
+    return (
+      (clip.effects?.length ?? 0) === 0 &&
+      (clip.audioEffects?.length ?? 0) === 0 &&
+      (clip.keyframes?.length ?? 0) === 0 &&
+      !clip.reversed &&
+      !clip.smoothSlowMo &&
+      (clip.speed === undefined || clip.speed === 1) &&
+      !clip.stabilization?.enabled &&
+      (!clip.emphasisAnimation || clip.emphasisAnimation.type === "none")
+    );
+  }
+
+  private resolveFastPathSequenceActionMap(
+    project: Project,
+  ): Map<string, FastPathSequenceActionPlan> {
+    const sequenceConfig = (project.metadata?.avatar as {
+      sequenceConfig?: Record<string, unknown>;
+    } | undefined)?.sequenceConfig;
+    const actions = [
+      ...(Array.isArray(sequenceConfig?.idle) ? sequenceConfig.idle : []),
+      ...(Array.isArray(sequenceConfig?.speaking) ? sequenceConfig.speaking : []),
+      ...(Array.isArray(sequenceConfig?.actions) ? sequenceConfig.actions : []),
+    ] as Array<Record<string, unknown>>;
+    const plans = new Map<string, FastPathSequenceActionPlan>();
+
+    for (const action of actions) {
+      const id = typeof action.id === "string" ? action.id : null;
+      const frames = Array.isArray(action.frames)
+        ? (action.frames as Array<Record<string, unknown>>)
+        : [];
+      if (!id || frames.length === 0) continue;
+
+      const defaultDuration =
+        typeof action.frameDurationSec === "number" &&
+        Number.isFinite(action.frameDurationSec) &&
+        action.frameDurationSec > 0
+          ? action.frameDurationSec
+          : 0.4;
+      const framePlan = frames
+        .map((frame) => {
+          const mediaId = typeof frame.mediaId === "string" ? frame.mediaId : "";
+          const duration =
+            typeof frame.durationSec === "number" &&
+            Number.isFinite(frame.durationSec) &&
+            frame.durationSec > 0
+              ? frame.durationSec
+              : defaultDuration;
+          return {
+            mediaId,
+            duration: Math.max(0.001, duration),
+            transform: this.normalizeFastPathOptionalTransform(frame.transform),
+          };
+        })
+        .filter((frame) => frame.mediaId);
+
+      const totalDuration = framePlan.reduce(
+        (total, frame) => total + frame.duration,
+        0,
+      );
+      const transform = this.normalizeFastPathTransform(action.transform);
+      if (totalDuration <= 0) continue;
+
+      plans.set(id, {
+        id,
+        frames: framePlan,
+        totalDuration,
+        transform,
+      });
+    }
+
+    return plans;
+  }
+
+  private normalizeFastPathTransform(value: unknown): Transform {
+    const transform = (value ?? {}) as Partial<Transform>;
+    return {
+      position: transform.position ?? { x: 0, y: 0 },
+      scale: transform.scale ?? { x: 1, y: 1 },
+      rotation: transform.rotation ?? 0,
+      anchor: transform.anchor ?? { x: 0.5, y: 0.5 },
+      opacity: transform.opacity ?? 1,
+      fitMode: transform.fitMode ?? "none",
+      crop: transform.crop,
+      borderRadius: transform.borderRadius,
+      rotate3d: transform.rotate3d,
+      perspective: transform.perspective,
+      transformStyle: transform.transformStyle,
+    };
+  }
+
+  private normalizeFastPathOptionalTransform(value: unknown): Transform | undefined {
+    return value ? this.normalizeFastPathTransform(value) : undefined;
+  }
+
+  private async *exportAvatarFastPath(
+    project: Project,
+    fullSettings: VideoExportSettings,
+    writableStream: FileSystemWritableFileStream,
+    totalFrames: number,
+    timelineDuration: number,
+    plan: AvatarFastPathPlan,
+    sequenceActionMap: Map<string, FastPathSequenceActionPlan>,
+    logExport: (stage: string, details?: Record<string, unknown>) => void,
+  ): AsyncGenerator<ExportProgress, ExportResult> {
+    const timings = {
+      drawMs: 0,
+      encodeMs: 0,
+      idleMs: 0,
+      frames: 0,
+    };
+    let bytesWritten = 0;
+    const mediaById = new Map(project.mediaLibrary.items.map((item) => [item.id, item]));
+    const imageCache = new Map<string, ImageBitmap>();
+    const videoFrameCache = new Map<string, FastPathVideoFrameCacheEntry>();
+    const sequenceFrameCache = new Map<string, FastPathVideoFrameCacheEntry>();
+    const mediaEngine = getMediaEngine();
+
+    try {
+      yield this.createProgress("preparing", 0, totalFrames, 0, 0);
+
+      if (!mediaEngine.isAvailable()) {
+        await mediaEngine.initialize();
+      }
+
+      const {
+        Output,
+        StreamTarget,
+        Mp4OutputFormat,
+        WebMOutputFormat,
+        MovOutputFormat,
+        CanvasSource,
+        AudioBufferSource,
+        getFirstEncodableVideoCodec,
+        getFirstEncodableAudioCodec,
+        QUALITY_MEDIUM,
+      } = this.mediabunny!;
+
+      const diskWriter = writableStream;
+      const chunkWriter = new WritableStream<{ data: Uint8Array; position: number }>({
+        async write(chunk) {
+          const buf = chunk.data.buffer.slice(
+            chunk.data.byteOffset,
+            chunk.data.byteOffset + chunk.data.byteLength,
+          ) as ArrayBuffer;
+          await diskWriter.seek(chunk.position);
+          await diskWriter.write(buf);
+          bytesWritten += chunk.data.byteLength;
+        },
+      });
+
+      let outputFormat;
+      switch (fullSettings.format) {
+        case "webm":
+          outputFormat = new WebMOutputFormat();
+          break;
+        case "mov":
+          outputFormat = new MovOutputFormat();
+          break;
+        case "mp4":
+        default:
+          outputFormat = new Mp4OutputFormat({ fastStart: false });
+          break;
+      }
+
+      const target = new StreamTarget(chunkWriter, {
+        chunked: true,
+        chunkSize: 4 * 1024 * 1024,
+      });
+      const output = new Output({ format: outputFormat, target });
+
+      const videoCodec = await getFirstEncodableVideoCodec(
+        outputFormat.getSupportedVideoCodecs(),
+        { width: fullSettings.width, height: fullSettings.height },
+      );
+      if (!videoCodec) {
+        throw this.createError(
+          "UNSUPPORTED_CODEC",
+          "No supported video codec found",
+          "preparing",
+        );
+      }
+
+      const audioCodecResult = await this.findSupportedAudioCodec(
+        outputFormat,
+        fullSettings.audioSettings,
+        getFirstEncodableAudioCodec,
+      );
+      const hardwareSupport = await this.probeVideoEncoderHardwareSupport({
+        codec: String(videoCodec),
+        width: fullSettings.width,
+        height: fullSettings.height,
+        bitrate: fullSettings.bitrate ? fullSettings.bitrate * 1000 : 8_000_000,
+        frameRate: fullSettings.frameRate,
+      });
+      logExport("avatar fast video encoder support", hardwareSupport);
+
+      const exportCanvas = new OffscreenCanvas(fullSettings.width, fullSettings.height);
+      const exportCtx = exportCanvas.getContext("2d", {
+        alpha: fullSettings.format === "webm",
+      }) as OffscreenCanvasRenderingContext2D | null;
+      if (!exportCtx) {
+        throw this.createError(
+          "FRAME_ENCODE_FAILED",
+          "Could not create avatar fast export canvas context",
+          "preparing",
+        );
+      }
+      exportCtx.imageSmoothingEnabled = true;
+      exportCtx.imageSmoothingQuality = "high";
+
+      const videoSource = new CanvasSource(exportCanvas, {
+        codec: videoCodec,
+        bitrate: fullSettings.bitrate ? fullSettings.bitrate * 1000 : QUALITY_MEDIUM,
+        keyFrameInterval: fullSettings.keyframeInterval / fullSettings.frameRate,
+        hardwareAcceleration: "prefer-hardware",
+        onEncoderConfig: (config) => {
+          logExport("avatar fast video encoder config", {
+            codec: config.codec,
+            width: config.width,
+            height: config.height,
+            bitrate: config.bitrate,
+            framerate: config.framerate,
+            hardwareAcceleration: config.hardwareAcceleration,
+          });
+        },
+      });
+      const audioSource = new AudioBufferSource({
+        codec: audioCodecResult.codec as "aac" | "opus" | "mp3",
+        bitrate: audioCodecResult.bitrate,
+      });
+
+      output.addVideoTrack(videoSource);
+      output.addAudioTrack(audioSource);
+      output.setMetadataTags({
+        title: project.name,
+        date: new Date(),
+      });
+
+      await output.start();
+      logExport("avatar fast output started", {
+        videoCodec,
+        audioCodec: audioCodecResult.codec,
+      });
+
+      try {
+        logExport("avatar fast audio encode start");
+        await this.encodeTimelineAudioToSource(project, audioSource);
+        logExport("avatar fast audio encode complete");
+      } finally {
+        this.audioEngine?.clearCache();
+      }
+      audioSource.close();
+
+      for (const mediaId of plan.videoMediaIds) {
+        const media = mediaById.get(mediaId);
+        if (!media?.blob) continue;
+        await mediaEngine.createExportDecoder(
+          media.id,
+          media.blob,
+          this.getFastPathDecodeWidth(media, fullSettings),
+        );
+      }
+      logExport("avatar fast decoders prepared", {
+        videoMediaCount: plan.videoMediaIds.length,
+        imageMediaCount: plan.imageMediaIds.length,
+      });
+
+      const logFrameWindow = Math.max(1, fullSettings.frameRate * 5);
+      const yieldFrameWindow = Math.max(1, fullSettings.frameRate);
+
+      for (let frame = 0; frame < totalFrames; frame++) {
+        if (this.abortController?.signal.aborted) {
+          throw this.createError(
+            "CANCELLED",
+            "Export cancelled by user",
+            "rendering",
+          );
+        }
+
+        const time = Math.min(frame / fullSettings.frameRate, timelineDuration);
+        const drawStart = performance.now();
+        exportCtx.clearRect(0, 0, fullSettings.width, fullSettings.height);
+        if (fullSettings.format !== "webm") {
+          exportCtx.fillStyle = "#000000";
+          exportCtx.fillRect(0, 0, fullSettings.width, fullSettings.height);
+        }
+
+        for (const { track } of plan.tracks) {
+          const activeClips = this.getFastPathActiveClips(track, time);
+          for (const clip of activeClips) {
+            const media = mediaById.get(clip.mediaId);
+            if (!media?.blob) continue;
+            const frameImage = await this.getFastPathFrame(
+              media,
+              clip,
+              time,
+              imageCache,
+              videoFrameCache,
+              sequenceFrameCache,
+              sequenceActionMap,
+              mediaById,
+              fullSettings,
+            );
+            if (!frameImage) continue;
+            this.drawFastPathFrame(
+              exportCtx,
+              frameImage,
+              clip.transform,
+              fullSettings.width,
+              fullSettings.height,
+            );
+          }
+        }
+
+        timings.drawMs += performance.now() - drawStart;
+
+        const encodeStart = performance.now();
+        await videoSource.add(time, 1 / fullSettings.frameRate);
+        timings.encodeMs += performance.now() - encodeStart;
+
+        this.currentExport!.framesRendered = frame + 1;
+        timings.frames = frame + 1;
+
+        if ((frame + 1) % yieldFrameWindow === 0) {
+          const idleStart = performance.now();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          timings.idleMs += performance.now() - idleStart;
+        }
+
+        if ((frame + 1) % logFrameWindow === 0) {
+          logExport("avatar fast render progress", {
+            frame: frame + 1,
+            totalFrames,
+            bytesWritten,
+            avgDrawMs: Math.round(timings.drawMs / timings.frames),
+            avgEncodeMs: Math.round(timings.encodeMs / timings.frames),
+            idleMs: Math.round(timings.idleMs),
+            mediaFrameCacheEntries: mediaEngine.getFrameCacheSize(),
+            videoFrameCacheEntries: videoFrameCache.size,
+            sequenceFrameCacheEntries: sequenceFrameCache.size,
+          });
+        }
+
+        yield this.createProgress(
+          "rendering",
+          (frame + 1) / totalFrames,
+          totalFrames,
+          frame + 1,
+          bytesWritten,
+        );
+      }
+
+      videoSource.close();
+      logExport("avatar fast video source closed", {
+        bytesWritten,
+        frames: timings.frames,
+        drawMs: Math.round(timings.drawMs),
+        encodeMs: Math.round(timings.encodeMs),
+        idleMs: Math.round(timings.idleMs),
+      });
+
+      yield this.createProgress("muxing", 0.98, totalFrames, totalFrames, bytesWritten);
+      await output.finalize();
+      await writableStream.close();
+      logExport("avatar fast finalize complete", { bytesWritten });
+
+      yield this.createProgress("complete", 1, totalFrames, totalFrames, bytesWritten);
+      return {
+        success: true,
+        stats: this.calculateStats(totalFrames, bytesWritten),
+      };
+    } catch (error) {
+      logExport("avatar fast failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      try { await writableStream.abort(); } catch {}
+      if (error && typeof error === "object" && "code" in error) {
+        return { success: false, error: error as ExportError };
+      }
+      return {
+        success: false,
+        error: this.createError(
+          "FRAME_ENCODE_FAILED",
+          error instanceof Error ? error.message : "Unknown avatar fast export error",
+          "rendering",
+        ),
+      };
+    } finally {
+      this.abortController = null;
+      this.currentExport = null;
+      for (const bitmap of imageCache.values()) {
+        try { bitmap.close(); } catch {}
+      }
+      imageCache.clear();
+      this.clearFastPathVideoFrameCache(videoFrameCache);
+      this.clearFastPathVideoFrameCache(sequenceFrameCache);
+      this.audioEngine?.clearCache();
+      try {
+        mediaEngine.disposeAllExportDecoders();
+        mediaEngine.clearFrameCache();
+      } catch {}
+      logExport("avatar fast cleanup complete");
+    }
+  }
+
+  private getFastPathDecodeWidth(
+    media: MediaItem,
+    settings: VideoExportSettings,
+  ): number {
+    const width = media.metadata.width;
+    if (Number.isFinite(width) && width > 0) {
+      return Math.min(width, settings.width);
+    }
+    return settings.width;
+  }
+
+  private getFastPathActiveClips(track: Track, time: number): Clip[] {
+    return track.clips.filter((clip) => {
+      const clipEnd = clip.startTime + clip.duration;
+      return time >= clip.startTime && time < clipEnd;
+    });
+  }
+
+  private async getFastPathFrame(
+    media: MediaItem,
+    clip: Clip,
+    time: number,
+    imageCache: Map<string, ImageBitmap>,
+    videoFrameCache: Map<string, FastPathVideoFrameCacheEntry>,
+    sequenceFrameCache: Map<string, FastPathVideoFrameCacheEntry>,
+    sequenceActionMap: Map<string, FastPathSequenceActionPlan>,
+    mediaById: Map<string, MediaItem>,
+    settings: VideoExportSettings,
+  ): Promise<DrawableFrame | null> {
+    if (!media.blob) return null;
+    if (media.type === "image") {
+      let bitmap = imageCache.get(media.id);
+      if (!bitmap) {
+        bitmap = await createImageBitmap(media.blob);
+        imageCache.set(media.id, bitmap);
+      }
+      return bitmap;
+    }
+
+    if (media.type !== "video") return null;
+    const sequenceFrame = await this.getFastPathSequenceFrame(
+      clip,
+      time,
+      imageCache,
+      sequenceFrameCache,
+      sequenceActionMap,
+      mediaById,
+      settings,
+    );
+    if (sequenceFrame) return sequenceFrame;
+
+    const mediaEngine = getMediaEngine();
+    let decoder = mediaEngine.getExportDecoder(media.id);
+    if (!decoder) {
+      decoder = await mediaEngine.createExportDecoder(
+        media.id,
+        media.blob,
+        this.getFastPathDecodeWidth(media, settings),
+      );
+    }
+    if (!decoder) return null;
+
+    const localTime = Math.max(0, time - clip.startTime);
+    const sourceDuration = media.metadata.duration;
+    const maxSourceTime = Number.isFinite(sourceDuration) && sourceDuration > 0
+      ? Math.max(0, sourceDuration - 1 / Math.max(1, settings.frameRate))
+      : Infinity;
+    const sourceTime = Math.min((clip.inPoint ?? 0) + localTime, maxSourceTime);
+    const sourceFrameIndex = this.getFastPathSourceFrameIndex(
+      sourceTime,
+      settings.frameRate,
+    );
+    const cacheKey = this.getFastPathVideoFrameCacheKey(
+      media.id,
+      sourceFrameIndex,
+      this.getFastPathDecodeWidth(media, settings),
+    );
+    const cached = videoFrameCache.get(cacheKey);
+    if (cached) {
+      cached.lastAccessed = performance.now();
+      return cached.canvas;
+    }
+
+    await this.prefetchFastPathVideoFrames({
+      decoder,
+      media,
+      startFrameIndex: sourceFrameIndex,
+      maxSourceTime,
+      settings,
+      cache: videoFrameCache,
+    });
+
+    const prefetched = videoFrameCache.get(cacheKey);
+    if (prefetched) {
+      prefetched.lastAccessed = performance.now();
+      return prefetched.canvas;
+    }
+
+    const canvas = await decoder.getFrame(sourceTime);
+    if (!canvas) return null;
+    this.setFastPathVideoFrameCache(
+      videoFrameCache,
+      cacheKey,
+      this.cloneFastPathCanvas(canvas),
+    );
+    return videoFrameCache.get(cacheKey)?.canvas ?? canvas;
+  }
+
+  private getFastPathSourceFrameIndex(sourceTime: number, frameRate: number): number {
+    return Math.max(0, Math.round(sourceTime * Math.max(1, frameRate)));
+  }
+
+  private async getFastPathSequenceFrame(
+    clip: Clip,
+    time: number,
+    imageCache: Map<string, ImageBitmap>,
+    sequenceFrameCache: Map<string, FastPathVideoFrameCacheEntry>,
+    sequenceActionMap: Map<string, FastPathSequenceActionPlan>,
+    mediaById: Map<string, MediaItem>,
+    settings: VideoExportSettings,
+  ): Promise<OffscreenCanvas | null> {
+    if (clip.metadata?.source !== "sequence") return null;
+    const sequenceActionId =
+      typeof clip.metadata.sequenceActionId === "string"
+        ? clip.metadata.sequenceActionId
+        : null;
+    if (!sequenceActionId) return null;
+    const action = sequenceActionMap.get(sequenceActionId);
+    if (!action) return null;
+
+    const localTime = Math.max(0, time - clip.startTime + (clip.inPoint ?? 0));
+    const actionTime =
+      action.totalDuration > 0
+        ? localTime % action.totalDuration
+        : 0;
+    const frame = this.getFastPathSequenceFrameAtTime(action, actionTime);
+    if (!frame) return null;
+
+    const cacheKey = [
+      "sequence",
+      action.id,
+      frame.mediaId,
+      settings.width,
+      settings.height,
+      JSON.stringify(action.transform),
+      JSON.stringify(frame.transform ?? null),
+    ].join(":");
+    const cached = sequenceFrameCache.get(cacheKey);
+    if (cached) {
+      cached.lastAccessed = performance.now();
+      return cached.canvas;
+    }
+
+    const media = mediaById.get(frame.mediaId);
+    if (!media?.blob) return null;
+    let bitmap = imageCache.get(media.id);
+    if (!bitmap) {
+      bitmap = await createImageBitmap(media.blob);
+      imageCache.set(media.id, bitmap);
+    }
+
+    const canvas = new OffscreenCanvas(settings.width, settings.height);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.clearRect(0, 0, settings.width, settings.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    this.drawFastPathFrame(
+      ctx as OffscreenCanvasRenderingContext2D,
+      bitmap,
+      this.combineFastPathTransforms(action.transform, frame.transform),
+      settings.width,
+      settings.height,
+    );
+    this.setFastPathVideoFrameCache(sequenceFrameCache, cacheKey, canvas);
+    return canvas;
+  }
+
+  private getFastPathSequenceFrameAtTime(
+    action: FastPathSequenceActionPlan,
+    time: number,
+  ): { mediaId: string; duration: number; transform?: Transform } | null {
+    if (action.frames.length === 0) return null;
+    let cursor = 0;
+    for (const frame of action.frames) {
+      cursor += frame.duration;
+      if (time < cursor) return frame;
+    }
+    return action.frames[action.frames.length - 1] ?? null;
+  }
+
+  private combineFastPathTransforms(
+    base: Transform,
+    relative?: Transform,
+  ): Transform {
+    if (!relative) return base;
+    return {
+      ...base,
+      position: {
+        x: base.position.x + relative.position.x,
+        y: base.position.y + relative.position.y,
+      },
+      scale: {
+        x: base.scale.x * relative.scale.x,
+        y: base.scale.y * relative.scale.y,
+      },
+      rotation: base.rotation + relative.rotation,
+      anchor: relative.anchor ?? base.anchor,
+      opacity: base.opacity * relative.opacity,
+      fitMode: relative.fitMode ?? base.fitMode,
+      crop: relative.crop ?? base.crop,
+    };
+  }
+
+  private getFastPathVideoFrameCacheKey(
+    mediaId: string,
+    sourceFrameIndex: number,
+    decodeWidth: number,
+  ): string {
+    return `${mediaId}:${decodeWidth}:${sourceFrameIndex}`;
+  }
+
+  private cloneFastPathCanvas(source: OffscreenCanvas): OffscreenCanvas {
+    const clone = new OffscreenCanvas(source.width, source.height);
+    const ctx = clone.getContext("2d");
+    if (ctx) {
+      ctx.drawImage(source, 0, 0);
+    }
+    return clone;
+  }
+
+  private setFastPathVideoFrameCache(
+    cache: Map<string, FastPathVideoFrameCacheEntry>,
+    key: string,
+    canvas: OffscreenCanvas,
+  ): void {
+    const previous = cache.get(key);
+    if (previous) {
+      previous.canvas.width = 0;
+      previous.canvas.height = 0;
+    }
+    cache.set(key, {
+      canvas,
+      lastAccessed: performance.now(),
+    });
+    this.trimFastPathVideoFrameCache(cache);
+  }
+
+  private trimFastPathVideoFrameCache(
+    cache: Map<string, FastPathVideoFrameCacheEntry>,
+  ): void {
+    while (cache.size > ExportEngine.FAST_PATH_VIDEO_CACHE_MAX) {
+      let oldestKey: string | null = null;
+      let oldestAccess = Infinity;
+      for (const [key, entry] of cache) {
+        if (entry.lastAccessed < oldestAccess) {
+          oldestAccess = entry.lastAccessed;
+          oldestKey = key;
+        }
+      }
+      if (!oldestKey) return;
+      const oldest = cache.get(oldestKey);
+      if (oldest) {
+        oldest.canvas.width = 0;
+        oldest.canvas.height = 0;
+      }
+      cache.delete(oldestKey);
+    }
+  }
+
+  private clearFastPathVideoFrameCache(
+    cache: Map<string, FastPathVideoFrameCacheEntry>,
+  ): void {
+    for (const entry of cache.values()) {
+      entry.canvas.width = 0;
+      entry.canvas.height = 0;
+    }
+    cache.clear();
+  }
+
+  private async prefetchFastPathVideoFrames(params: {
+    decoder: {
+      getFramesAtTimestamps(
+        timestamps: number[],
+      ): Promise<Array<{ timestamp: number; canvas: OffscreenCanvas }>>;
+      getFrame(timestamp: number): Promise<OffscreenCanvas | null>;
+    };
+    media: MediaItem;
+    startFrameIndex: number;
+    maxSourceTime: number;
+    settings: VideoExportSettings;
+    cache: Map<string, FastPathVideoFrameCacheEntry>;
+  }): Promise<void> {
+    const frameRate = Math.max(1, params.settings.frameRate);
+    const decodeWidth = this.getFastPathDecodeWidth(params.media, params.settings);
+    const frameCount = Math.max(
+      1,
+      Math.round(ExportEngine.FAST_PATH_PREFETCH_SECONDS * frameRate),
+    );
+    const timestamps: number[] = [];
+
+    for (let offset = 0; offset < frameCount; offset++) {
+      const frameIndex = params.startFrameIndex + offset;
+      const timestamp = frameIndex / frameRate;
+      if (timestamp > params.maxSourceTime) break;
+      const key = this.getFastPathVideoFrameCacheKey(
+        params.media.id,
+        frameIndex,
+        decodeWidth,
+      );
+      if (params.cache.has(key)) continue;
+      timestamps.push(timestamp);
+    }
+
+    if (timestamps.length === 0) return;
+
+    try {
+      const frames = await params.decoder.getFramesAtTimestamps(timestamps);
+      for (const frame of frames) {
+        const frameIndex = this.getFastPathSourceFrameIndex(
+          frame.timestamp,
+          frameRate,
+        );
+        const key = this.getFastPathVideoFrameCacheKey(
+          params.media.id,
+          frameIndex,
+          decodeWidth,
+        );
+        this.setFastPathVideoFrameCache(params.cache, key, frame.canvas);
+      }
+    } catch {
+      const timestamp = params.startFrameIndex / frameRate;
+      const frame = await params.decoder.getFrame(timestamp);
+      if (!frame) return;
+      const key = this.getFastPathVideoFrameCacheKey(
+        params.media.id,
+        params.startFrameIndex,
+        decodeWidth,
+      );
+      this.setFastPathVideoFrameCache(
+        params.cache,
+        key,
+        this.cloneFastPathCanvas(frame),
+      );
+    }
+  }
+
+  private drawFastPathFrame(
+    ctx: OffscreenCanvasRenderingContext2D,
+    frame: DrawableFrame,
+    transform: Transform,
+    canvasWidth: number,
+    canvasHeight: number,
+  ): void {
+    ctx.save();
+    ctx.globalAlpha = transform.opacity ?? 1;
+    ctx.translate(
+      canvasWidth / 2 + (transform.position?.x ?? 0),
+      canvasHeight / 2 + (transform.position?.y ?? 0),
+    );
+    ctx.rotate(((transform.rotation ?? 0) * Math.PI) / 180);
+    ctx.scale(transform.scale?.x ?? 1, transform.scale?.y ?? 1);
+
+    const sourceWidth = frame.width;
+    const sourceHeight = frame.height;
+    const fitMode = transform.fitMode ?? "none";
+    let drawWidth = sourceWidth;
+    let drawHeight = sourceHeight;
+
+    if (fitMode !== "none") {
+      const sourceAspect = sourceWidth / sourceHeight;
+      const canvasAspect = canvasWidth / canvasHeight;
+      if (fitMode === "stretch") {
+        drawWidth = canvasWidth;
+        drawHeight = canvasHeight;
+      } else if (fitMode === "cover") {
+        if (sourceAspect > canvasAspect) {
+          drawHeight = canvasHeight;
+          drawWidth = canvasHeight * sourceAspect;
+        } else {
+          drawWidth = canvasWidth;
+          drawHeight = canvasWidth / sourceAspect;
+        }
+      } else {
+        if (sourceAspect > canvasAspect) {
+          drawWidth = canvasWidth;
+          drawHeight = canvasWidth / sourceAspect;
+        } else {
+          drawHeight = canvasHeight;
+          drawWidth = canvasHeight * sourceAspect;
+        }
+      }
+    }
+
+    const anchor = transform.anchor ?? { x: 0.5, y: 0.5 };
+    const drawX = -drawWidth * anchor.x;
+    const drawY = -drawHeight * anchor.y;
+
+    if (transform.crop) {
+      const sx = transform.crop.x * sourceWidth;
+      const sy = transform.crop.y * sourceHeight;
+      const sWidth = transform.crop.width * sourceWidth;
+      const sHeight = transform.crop.height * sourceHeight;
+      ctx.drawImage(frame, sx, sy, sWidth, sHeight, drawX, drawY, drawWidth, drawHeight);
+    } else {
+      ctx.drawImage(frame, drawX, drawY, drawWidth, drawHeight);
+    }
+
+    ctx.restore();
   }
 
   async *exportAudio(

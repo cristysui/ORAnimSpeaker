@@ -6,6 +6,7 @@ import { useUIStore } from "../../stores/ui-store";
 import {
   getAvatarConfig,
   updateAvatarSequenceActionTransform,
+  updateAvatarSequenceFrameTransform,
   updateAvatarVideoAssetTransform,
 } from "./avatar-project";
 import { useAvatarSelectionStore } from "./avatar-selection-store";
@@ -13,9 +14,9 @@ import { useAvatarAlignmentStore } from "./avatar-alignment-store";
 import type {
   AvatarActionKind,
   AvatarSequenceAction,
-  AvatarSource,
   AvatarVideoAsset,
 } from "./avatar-types";
+import { defaultAvatarTransform } from "./avatar-types";
 
 export const AVATAR_KIND_LABELS: Record<AvatarActionKind, string> = {
   idle: "静止",
@@ -32,11 +33,13 @@ interface DragState {
 
 export interface AvatarConfigItem {
   id: string;
-  source: AvatarSource;
+  source: "video" | "sequence" | "sequence-frame";
+  actionId?: string;
   name: string;
   kind: AvatarActionKind;
   mediaId?: string;
   transform: Transform;
+  previewTransform: Transform;
 }
 
 export interface SubjectBox {
@@ -72,12 +75,19 @@ export const AvatarConfigStageOverlay: React.FC<{
       ...config.sequenceConfig.idle.map((item) => sequenceItemToConfig(item)),
       ...config.sequenceConfig.speaking.map((item) => sequenceItemToConfig(item)),
       ...config.sequenceConfig.actions.map((item) => sequenceItemToConfig(item)),
+      ...config.sequenceConfig.idle.flatMap((item) => sequenceFrameItemsToConfig(item)),
+      ...config.sequenceConfig.speaking.flatMap((item) => sequenceFrameItemsToConfig(item)),
+      ...config.sequenceConfig.actions.flatMap((item) => sequenceFrameItemsToConfig(item)),
     ];
   }, [config]);
 
   const selectedItem = useMemo(() => {
     if (!selectedConfig) return null;
-    return allItems.find((item) => item.source === selectedConfig.source && item.id === selectedConfig.id) ?? null;
+    return allItems.find((item) => {
+      if (item.source !== selectedConfig.source || item.id !== selectedConfig.id) return false;
+      if (selectedConfig.source !== "sequence-frame") return true;
+      return item.actionId === selectedConfig.actionId;
+    }) ?? null;
   }, [allItems, selectedConfig]);
 
   const selectedKey = selectedItem ? itemKey(selectedItem) : "";
@@ -114,14 +124,21 @@ export const AvatarConfigStageOverlay: React.FC<{
   );
 
   const transform = selectedItem?.transform;
+  const previewTransform = selectedItem?.previewTransform;
   const stageScale = Math.min(frameWidth / canvasWidth, frameHeight / canvasHeight);
 
   const updateTransform = useCallback((nextTransform: Transform) => {
     if (!selectedConfig) return;
     if (selectedConfig.source === "video") {
       updateAvatarVideoAssetTransform(selectedConfig.id, nextTransform);
-    } else {
+    } else if (selectedConfig.source === "sequence") {
       updateAvatarSequenceActionTransform(selectedConfig.id, nextTransform);
+    } else {
+      updateAvatarSequenceFrameTransform(
+        selectedConfig.actionId,
+        selectedConfig.id,
+        nextTransform,
+      );
     }
   }, [selectedConfig]);
 
@@ -179,15 +196,16 @@ export const AvatarConfigStageOverlay: React.FC<{
     !selectedItem ||
     !media ||
     !transform ||
+    !previewTransform ||
     frameWidth <= 0 ||
     frameHeight <= 0
   ) {
     return null;
   }
 
-  const currentLayout = layoutForMedia(media, transform, stageScale, frameWidth, frameHeight, canvasWidth, canvasHeight);
+  const currentLayout = layoutForMedia(media, previewTransform, stageScale, frameWidth, frameHeight, canvasWidth, canvasHeight);
   const referenceLayout = referenceMedia && referenceItem
-    ? layoutForMedia(referenceMedia, referenceItem.transform, stageScale, frameWidth, frameHeight, canvasWidth, canvasHeight)
+    ? layoutForMedia(referenceMedia, referenceItem.previewTransform, stageScale, frameWidth, frameHeight, canvasWidth, canvasHeight)
     : null;
 
   return (
@@ -201,7 +219,7 @@ export const AvatarConfigStageOverlay: React.FC<{
           width: currentLayout.width,
           height: currentLayout.height,
           opacity: transform.opacity,
-          transform: `rotate(${transform.rotation}deg)`,
+          transform: `rotate(${previewTransform.rotation}deg)`,
           transformOrigin: "center",
         }}
       >
@@ -231,7 +249,7 @@ export const AvatarConfigStageOverlay: React.FC<{
             width: referenceLayout.width,
             height: referenceLayout.height,
             opacity: referenceOpacity,
-            transform: `rotate(${referenceItem.transform.rotation}deg)`,
+            transform: `rotate(${referenceItem.previewTransform.rotation}deg)`,
             transformOrigin: "center",
           }}
         >
@@ -272,6 +290,7 @@ export function videoItemToConfig(item: AvatarVideoAsset): AvatarConfigItem {
     kind: item.kind,
     mediaId: item.mediaId,
     transform: item.transform,
+    previewTransform: item.transform,
   };
 }
 
@@ -283,11 +302,52 @@ export function sequenceItemToConfig(item: AvatarSequenceAction): AvatarConfigIt
     kind: item.kind,
     mediaId: item.frames[0]?.mediaId,
     transform: item.transform,
+    previewTransform: item.transform,
   };
 }
 
-export function itemKey(item: Pick<AvatarConfigItem, "source" | "id">): string {
-  return `${item.source}:${item.id}`;
+export function sequenceFrameItemsToConfig(item: AvatarSequenceAction): AvatarConfigItem[] {
+  return item.frames.map((frame, index) => {
+    const relativeTransform = frame.transform ?? defaultAvatarTransform();
+    return {
+      id: frame.id,
+      actionId: item.id,
+      source: "sequence-frame",
+      name: `${item.name} #${index + 1}`,
+      kind: item.kind,
+      mediaId: frame.mediaId,
+      transform: relativeTransform,
+      previewTransform: combineAvatarTransforms(item.transform, relativeTransform),
+    };
+  });
+}
+
+export function combineAvatarTransforms(
+  base: Transform,
+  relative: Transform,
+): Transform {
+  return {
+    ...base,
+    position: {
+      x: base.position.x + relative.position.x,
+      y: base.position.y + relative.position.y,
+    },
+    scale: {
+      x: base.scale.x * relative.scale.x,
+      y: base.scale.y * relative.scale.y,
+    },
+    rotation: base.rotation + relative.rotation,
+    anchor: relative.anchor ?? base.anchor,
+    opacity: base.opacity * relative.opacity,
+    fitMode: relative.fitMode ?? base.fitMode,
+    crop: relative.crop ?? base.crop,
+  };
+}
+
+export function itemKey(item: Pick<AvatarConfigItem, "source" | "id" | "actionId">): string {
+  return item.source === "sequence-frame"
+    ? `${item.source}:${item.actionId}:${item.id}`
+    : `${item.source}:${item.id}`;
 }
 
 function layoutForMedia(

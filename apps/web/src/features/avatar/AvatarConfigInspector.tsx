@@ -5,6 +5,7 @@ import { useProjectStore } from "../../stores/project-store";
 import {
   getAvatarConfig,
   updateAvatarSequenceActionTransform,
+  updateAvatarSequenceFrameTransform,
   updateAvatarVideoAssetTransform,
 } from "./avatar-project";
 import { useAvatarSelectionStore } from "./avatar-selection-store";
@@ -12,6 +13,7 @@ import { useAvatarAlignmentStore } from "./avatar-alignment-store";
 import {
   detectSubjectBox,
   itemKey,
+  sequenceFrameItemsToConfig,
   sequenceItemToConfig,
   subjectCenterOnCanvas,
   videoItemToConfig,
@@ -48,14 +50,19 @@ export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> =
       ...config.sequenceConfig.idle.map((item) => sequenceItemToConfig(item)),
       ...config.sequenceConfig.speaking.map((item) => sequenceItemToConfig(item)),
       ...config.sequenceConfig.actions.map((item) => sequenceItemToConfig(item)),
+      ...config.sequenceConfig.idle.flatMap((item) => sequenceFrameItemsToConfig(item)),
+      ...config.sequenceConfig.speaking.flatMap((item) => sequenceFrameItemsToConfig(item)),
+      ...config.sequenceConfig.actions.flatMap((item) => sequenceFrameItemsToConfig(item)),
     ];
   }, [config]);
 
   const selectedItem = useMemo(() => {
     if (!selectedConfig) return null;
-    return allItems.find(
-      (item) => item.source === selectedConfig.source && item.id === selectedConfig.id,
-    ) ?? null;
+    return allItems.find((item) => {
+      if (item.source !== selectedConfig.source || item.id !== selectedConfig.id) return false;
+      if (selectedConfig.source !== "sequence-frame") return true;
+      return item.actionId === selectedConfig.actionId;
+    }) ?? null;
   }, [allItems, selectedConfig]);
 
   const selectedKey = selectedItem ? itemKey(selectedItem) : "";
@@ -98,11 +105,50 @@ export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> =
     return t("avatar.manualAction");
   };
   const transform = selectedItem.transform;
+  const toEditableTransform = (effectiveTransform: Transform): Transform => {
+    if (selectedItem.source !== "sequence-frame") return effectiveTransform;
+    const basePosition = {
+      x: selectedItem.previewTransform.position.x - selectedItem.transform.position.x,
+      y: selectedItem.previewTransform.position.y - selectedItem.transform.position.y,
+    };
+    const baseScale = {
+      x: selectedItem.transform.scale.x !== 0
+        ? selectedItem.previewTransform.scale.x / selectedItem.transform.scale.x
+        : 1,
+      y: selectedItem.transform.scale.y !== 0
+        ? selectedItem.previewTransform.scale.y / selectedItem.transform.scale.y
+        : 1,
+    };
+    const baseRotation = selectedItem.previewTransform.rotation - selectedItem.transform.rotation;
+    const baseOpacity = selectedItem.transform.opacity !== 0
+      ? selectedItem.previewTransform.opacity / selectedItem.transform.opacity
+      : 1;
+
+    return {
+      ...selectedItem.transform,
+      position: {
+        x: effectiveTransform.position.x - basePosition.x,
+        y: effectiveTransform.position.y - basePosition.y,
+      },
+      scale: {
+        x: effectiveTransform.scale.x / Math.max(0.0001, baseScale.x),
+        y: effectiveTransform.scale.y / Math.max(0.0001, baseScale.y),
+      },
+      rotation: effectiveTransform.rotation - baseRotation,
+      opacity: effectiveTransform.opacity / Math.max(0.0001, baseOpacity),
+    };
+  };
   const updateTransform = (nextTransform: Transform) => {
     if (selectedConfig.source === "video") {
       updateAvatarVideoAssetTransform(selectedConfig.id, nextTransform);
-    } else {
+    } else if (selectedConfig.source === "sequence") {
       updateAvatarSequenceActionTransform(selectedConfig.id, nextTransform);
+    } else {
+      updateAvatarSequenceFrameTransform(
+        selectedConfig.actionId,
+        selectedConfig.id,
+        nextTransform,
+      );
     }
   };
   const patchTransform = (patch: Partial<Transform>) => {
@@ -110,12 +156,12 @@ export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> =
   };
   const applyReferenceTransform = () => {
     if (!referenceItem) return;
-    updateTransform({
+    updateTransform(toEditableTransform({
       ...transform,
-      position: { ...referenceItem.transform.position },
-      scale: { ...referenceItem.transform.scale },
-      rotation: referenceItem.transform.rotation,
-    });
+      position: { ...referenceItem.previewTransform.position },
+      scale: { ...referenceItem.previewTransform.scale },
+      rotation: referenceItem.previewTransform.rotation,
+    }));
     setAlignMessage(t("avatar.alignApplied"));
   };
   const autoAlignSubject = async () => {
@@ -134,7 +180,7 @@ export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> =
 
       const referenceCenter = subjectCenterOnCanvas(
         referenceBox,
-        referenceItem.transform,
+        referenceItem.previewTransform,
         project.settings.width,
         project.settings.height,
       );
@@ -143,22 +189,22 @@ export const AvatarConfigInspector: React.FC<{ mode?: "align" | "transform" }> =
         y: currentBox.y + currentBox.height / 2 - currentBox.sourceHeight * (transform.anchor?.y ?? 0.5),
       };
       const scaleByHeight =
-        (referenceBox.height * referenceItem.transform.scale.y) / Math.max(1, currentBox.height);
+        (referenceBox.height * referenceItem.previewTransform.scale.y) / Math.max(1, currentBox.height);
       const scaleByWidth =
-        (referenceBox.width * referenceItem.transform.scale.x) / Math.max(1, currentBox.width);
+        (referenceBox.width * referenceItem.previewTransform.scale.x) / Math.max(1, currentBox.width);
       const nextScale = Math.max(
         0.02,
         Math.min(20, scaleByHeight * 0.75 + scaleByWidth * 0.25),
       );
 
-      updateTransform({
+      updateTransform(toEditableTransform({
         ...transform,
         position: {
           x: referenceCenter.x - project.settings.width / 2 - currentSourceOffset.x * nextScale,
           y: referenceCenter.y - project.settings.height / 2 - currentSourceOffset.y * nextScale,
         },
         scale: { x: nextScale, y: nextScale },
-      });
+      }));
       setAlignMessage(t("avatar.autoAlignApplied"));
     } catch (error) {
       console.warn("[avatar] Auto align failed", error);

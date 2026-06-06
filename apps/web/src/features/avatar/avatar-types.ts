@@ -17,6 +17,7 @@ export interface AvatarSequenceFrame {
   mediaId: string;
   name: string;
   durationSec?: number;
+  transform?: Transform;
 }
 
 export interface AvatarSequenceAction {

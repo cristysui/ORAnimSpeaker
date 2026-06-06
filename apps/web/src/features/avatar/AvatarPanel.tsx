@@ -80,6 +80,8 @@ export const AvatarPanel: React.FC = () => {
 
   const selectedVideoId = selectedConfig?.source === "video" ? selectedConfig.id : null;
   const selectedSequenceId = selectedConfig?.source === "sequence" ? selectedConfig.id : null;
+  const selectedSequenceFrameId =
+    selectedConfig?.source === "sequence-frame" ? selectedConfig.id : null;
 
   const selectVideo = (assetId: string) => {
     clearSelection();
@@ -89,6 +91,11 @@ export const AvatarPanel: React.FC = () => {
   const selectSequence = (actionId: string) => {
     clearSelection();
     selectConfig({ source: "sequence", id: actionId });
+  };
+
+  const selectSequenceFrame = (actionId: string, frameId: string) => {
+    clearSelection();
+    selectConfig({ source: "sequence-frame", id: frameId, actionId });
   };
 
   const importVideos = async (kind: AvatarActionKind, files: File[] | FileList | null) => {
@@ -335,10 +342,12 @@ export const AvatarPanel: React.FC = () => {
                   required
                   disabled={busy}
                   selectedId={selectedSequenceId}
+                  selectedFrameId={selectedSequenceFrameId}
                   draggedFrame={draggedFrame}
                   onCreate={(files) => importSequenceAction(kind, files)}
                   onAddFrames={addSequenceFrames}
                   onSelect={selectSequence}
+                  onSelectFrame={selectSequenceFrame}
                   onDeleteAction={removeAvatarSequenceAction}
                   onDeleteFrame={removeAvatarSequenceFrame}
                   onRemoveFrameBackground={removeSequenceFrameBackground}
@@ -355,10 +364,12 @@ export const AvatarPanel: React.FC = () => {
                   action={action}
                   disabled={busy}
                   selectedId={selectedSequenceId}
+                  selectedFrameId={selectedSequenceFrameId}
                   draggedFrame={draggedFrame}
                   onCreate={(files) => importSequenceAction("action", files, sequenceName)}
                   onAddFrames={addSequenceFrames}
                   onSelect={selectSequence}
+                  onSelectFrame={selectSequenceFrame}
                   onDeleteAction={removeAvatarSequenceAction}
                   onDeleteFrame={removeAvatarSequenceFrame}
                   onRemoveFrameBackground={removeSequenceFrameBackground}
@@ -625,10 +636,12 @@ const SequenceActionSlot: React.FC<{
   required?: boolean;
   disabled: boolean;
   selectedId: string | null;
+  selectedFrameId: string | null;
   draggedFrame: { actionId: string; index: number } | null;
   onCreate: (files: FileList | null) => void;
   onAddFrames: (action: AvatarSequenceAction, files: FileList | null) => void;
   onSelect: (actionId: string) => void;
+  onSelectFrame: (actionId: string, frameId: string) => void;
   onDeleteAction: (actionId: string) => void;
   onDeleteFrame: (actionId: string, frameId: string) => void;
   onRemoveFrameBackground: (actionId: string, frame: AvatarSequenceFrame) => void;
@@ -642,10 +655,12 @@ const SequenceActionSlot: React.FC<{
   required,
   disabled,
   selectedId,
+  selectedFrameId,
   draggedFrame,
   onCreate,
   onAddFrames,
   onSelect,
+  onSelectFrame,
   onDeleteAction,
   onDeleteFrame,
   onRemoveFrameBackground,
@@ -711,7 +726,9 @@ const SequenceActionSlot: React.FC<{
                 actionId={action.id}
                 frame={frame}
                 index={index}
+                selected={selectedFrameId === frame.id}
                 dragging={draggedFrame?.actionId === action.id && draggedFrame.index === index}
+                onSelect={() => onSelectFrame(action.id, frame.id)}
                 onDragFrame={onDragFrame}
                 onDropFrame={(toIndex) => {
                   if (!draggedFrame || draggedFrame.actionId !== action.id) return;
@@ -769,7 +786,9 @@ const FrameCard: React.FC<{
   actionId: string;
   frame: AvatarSequenceFrame;
   index: number;
+  selected: boolean;
   dragging: boolean;
+  onSelect: () => void;
   onDragFrame: (value: { actionId: string; index: number } | null) => void;
   onDropFrame: (index: number) => void;
   onDelete: () => void;
@@ -779,7 +798,9 @@ const FrameCard: React.FC<{
   actionId,
   frame,
   index,
+  selected,
   dragging,
+  onSelect,
   onDragFrame,
   onDropFrame,
   onDelete,
@@ -791,8 +812,24 @@ const FrameCard: React.FC<{
   <div
     draggable
     className={`group relative aspect-square overflow-hidden rounded border bg-bg-2 ${
-      dragging ? "border-accent opacity-60" : "border-border"
+      dragging
+        ? "border-accent opacity-60"
+        : selected
+          ? "border-accent ring-1 ring-accent"
+          : "border-border hover:border-accent"
     }`}
+    onClick={(event) => {
+      event.stopPropagation();
+      onSelect();
+    }}
+    onKeyDown={(event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      event.stopPropagation();
+      onSelect();
+    }}
+    role="button"
+    tabIndex={0}
     onDragStart={(event) => {
       event.stopPropagation();
       event.dataTransfer.effectAllowed = "move";

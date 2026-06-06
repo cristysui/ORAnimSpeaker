@@ -536,16 +536,19 @@ async function renderActionSequence(
   return encodeFramePlanVideo(project, expandActionFrames(action, duration), duration, action.transform);
 }
 
-function expandActionFrames(action: AvatarSequenceAction, targetDuration: number): { mediaId: string; duration: number }[] {
+function expandActionFrames(
+  action: AvatarSequenceAction,
+  targetDuration: number,
+): { mediaId: string; duration: number; transform?: Transform }[] {
   const frames = action.frames;
   if (frames.length === 0) return [];
-  const plan: { mediaId: string; duration: number }[] = [];
+  const plan: { mediaId: string; duration: number; transform?: Transform }[] = [];
   let cursor = 0;
   let index = 0;
   while (cursor < targetDuration - 0.001) {
     const frame = frames[index % frames.length];
     const duration = Math.min(frame.durationSec ?? action.frameDurationSec, targetDuration - cursor);
-    plan.push({ mediaId: frame.mediaId, duration });
+    plan.push({ mediaId: frame.mediaId, duration, transform: frame.transform });
     cursor += duration;
     index += 1;
   }
@@ -580,6 +583,29 @@ function drawFrameWithTransform(
   const drawY = -bitmap.height * anchor.y;
   context.drawImage(bitmap, drawX, drawY, bitmap.width, bitmap.height);
   context.restore();
+}
+
+function combineSequenceFrameTransform(
+  base: Transform,
+  relative?: Transform,
+): Transform {
+  if (!relative) return base;
+  return {
+    ...base,
+    position: {
+      x: base.position.x + relative.position.x,
+      y: base.position.y + relative.position.y,
+    },
+    scale: {
+      x: base.scale.x * relative.scale.x,
+      y: base.scale.y * relative.scale.y,
+    },
+    rotation: base.rotation + relative.rotation,
+    anchor: relative.anchor ?? base.anchor,
+    opacity: base.opacity * relative.opacity,
+    fitMode: relative.fitMode ?? base.fitMode,
+    crop: relative.crop ?? base.crop,
+  };
 }
 
 async function normalizeSequenceFrameAlpha(bitmap: ImageBitmap): Promise<ImageBitmap> {
@@ -723,7 +749,7 @@ async function createSequenceActionThumbnail(
 
 async function encodeFramePlanVideo(
   project: Project,
-  framePlan: { mediaId: string; duration: number }[],
+  framePlan: { mediaId: string; duration: number; transform?: Transform }[],
   fallbackDuration: number,
   transform: Transform = defaultAvatarTransform(),
 ): Promise<Blob> {
@@ -778,7 +804,13 @@ async function encodeFramePlanVideo(
     if (media?.blob) {
       const rawBitmap = await createImageBitmap(media.blob);
       const bitmap = await normalizeSequenceFrameAlpha(rawBitmap);
-      drawFrameWithTransform(context, bitmap, transform, canvas.width, canvas.height);
+      drawFrameWithTransform(
+        context,
+        bitmap,
+        combineSequenceFrameTransform(transform, frame.transform),
+        canvas.width,
+        canvas.height,
+      );
       bitmap.close();
       if (bitmap !== rawBitmap) rawBitmap.close();
     }

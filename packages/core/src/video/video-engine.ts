@@ -2571,6 +2571,11 @@ export class VideoEngine {
       }
     }
     this.gifFrameCache.clear();
+
+    for (const bitmap of this.staticImageCache.values()) {
+      try { bitmap.close(); } catch {}
+    }
+    this.staticImageCache.clear();
   }
 
   /**

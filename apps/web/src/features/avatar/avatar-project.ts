@@ -136,7 +136,10 @@ export const removeAvatarSequenceAction = (actionId: string): void => {
   );
   saveAvatarConfig(nextConfig);
   const selection = useAvatarSelectionStore.getState().selectedConfig;
-  if (selection?.source === "sequence" && selection.id === actionId) {
+  if (
+    (selection?.source === "sequence" && selection.id === actionId) ||
+    (selection?.source === "sequence-frame" && selection.actionId === actionId)
+  ) {
     useAvatarSelectionStore.getState().clearConfigSelection();
   }
 };
@@ -202,6 +205,10 @@ export const removeAvatarSequenceFrame = (
   nextConfig.sequenceConfig.speaking = update(nextConfig.sequenceConfig.speaking);
   nextConfig.sequenceConfig.actions = update(nextConfig.sequenceConfig.actions);
   saveAvatarConfig(nextConfig);
+  const selection = useAvatarSelectionStore.getState().selectedConfig;
+  if (selection?.source === "sequence-frame" && selection.id === frameId) {
+    useAvatarSelectionStore.getState().clearConfigSelection();
+  }
 };
 
 export const reorderAvatarSequenceFrames = (
@@ -265,6 +272,30 @@ export const updateAvatarSequenceActionTransform = (
   const nextConfig = structuredClone(config);
   const update = (items: AvatarSequenceAction[]) =>
     items.map((item) => (item.id === actionId ? { ...item, transform } : item));
+  nextConfig.sequenceConfig.idle = update(nextConfig.sequenceConfig.idle);
+  nextConfig.sequenceConfig.speaking = update(nextConfig.sequenceConfig.speaking);
+  nextConfig.sequenceConfig.actions = update(nextConfig.sequenceConfig.actions);
+  saveAvatarConfig(nextConfig);
+};
+
+export const updateAvatarSequenceFrameTransform = (
+  actionId: string,
+  frameId: string,
+  transform: Transform,
+): void => {
+  const config = getAvatarConfig(useProjectStore.getState().project);
+  const nextConfig = structuredClone(config);
+  const update = (items: AvatarSequenceAction[]) =>
+    items.map((item) =>
+      item.id === actionId
+        ? {
+            ...item,
+            frames: item.frames.map((frame) =>
+              frame.id === frameId ? { ...frame, transform } : frame,
+            ),
+          }
+        : item,
+    );
   nextConfig.sequenceConfig.idle = update(nextConfig.sequenceConfig.idle);
   nextConfig.sequenceConfig.speaking = update(nextConfig.sequenceConfig.speaking);
   nextConfig.sequenceConfig.actions = update(nextConfig.sequenceConfig.actions);
